@@ -1,0 +1,20 @@
+# Secrets. .env.example is the only one that may be tracked.
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+secrets/
+appsettings.*.local.json
+
+# .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+TestResults/
+
+# Local
+CLAUDE.local.md

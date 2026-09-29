@@ -1,0 +1,49 @@
+#!/bin/sh
+# Conventional Commits guard (ADR 0016).
+#
+# Delegates to the tlc-spec-lean validator rather than reimplementing the format:
+# that script is the authority, and duplicating its rules would let the two drift.
+#
+# Installed through core.hooksPath, which `ws.mjs sync` sets on every child repo,
+# so this file travels with the repo. A symlink into .git/hooks would not: that
+# directory is never versioned, and creating symlinks on Windows needs elevation.
+
+set -e
+
+msg_file="$1"
+
+# Probe each interpreter by running it, never by locating it. On Windows,
+# `python3` and `py` resolve to shims that exist on PATH and then fail: the
+# Microsoft Store alias prints "Python was not found", and a stale `py` launcher
+# points at a directory that is gone. `command -v` is satisfied by both, so a
+# hook that trusts it blocks every commit on this machine.
+find_python() {
+  for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The workspace root holds the skill. Candidate 1 is the workspace itself,
+# candidate 2 a child repo two levels below it (repos/<name>).
+for candidate in \
+  ".claude/skills/tlc-spec-lean/scripts/check_commit.py" \
+  "../../.claude/skills/tlc-spec-lean/scripts/check_commit.py"
+do
+  if [ -f "$candidate" ]; then
+    if python_bin="$(find_python)"; then
+      exec "$python_bin" "$candidate" "$msg_file"
+    fi
+    echo "commit-msg: no working python found, cannot run $candidate" >&2
+    exit 1
+  fi
+done
+
+# Fail closed: an unvalidated message is not better than a blocked commit.
+echo "commit-msg: check_commit.py not found. Looked for:" >&2
+echo "  .claude/skills/tlc-spec-lean/scripts/check_commit.py" >&2
+echo "  ../../.claude/skills/tlc-spec-lean/scripts/check_commit.py" >&2
+exit 1

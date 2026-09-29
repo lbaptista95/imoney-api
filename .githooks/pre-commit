@@ -1,0 +1,23 @@
+#!/bin/sh
+# Secret guard (ADR 0014).
+#
+# A private GitHub repo on a personal account gets no secret scanning and no push
+# protection, so this hook is the only thing between a staged credential and the
+# history. It therefore fails closed: no scanner means no commit.
+#
+# --redact keeps the secret out of the terminal and out of any log that captures
+# it, which would otherwise leak the value this hook exists to protect.
+#
+# -v is what makes the finding actionable: without it gitleaks reports only
+# "leaks found: 1" and you are left grepping your own staged diff. With both
+# flags the output names the file, the line and the rule, while Finding and
+# Secret read REDACTED.
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found on PATH." >&2
+  echo "  install it with:  choco install gitleaks -y" >&2
+  echo "  refusing the commit rather than letting an unscanned change through." >&2
+  exit 1
+fi
+
+exec gitleaks git --staged --redact --no-banner -v
