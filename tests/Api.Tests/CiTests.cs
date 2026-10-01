@@ -251,12 +251,7 @@ public sealed partial class CiTests
     {
         var cache = TempDirectory();
 
-        // Only the directories dotnet itself needs. gitleaks is installed elsewhere
-        // (chocolatey on this machine), so it is genuinely off this PATH.
-        var path = string.Join(
-            Path.PathSeparator,
-            new[] { Path.GetDirectoryName(FindOnPath("dotnet")), Environment.SystemDirectory }
-                .Where(directory => !string.IsNullOrEmpty(directory)));
+        var path = MinimalPath();
         Assert.Null(FindOnPath("gitleaks", path));
 
         try
@@ -278,6 +273,68 @@ public sealed partial class CiTests
             DeleteTree(cache);
         }
     }
+
+    // ---- C67-C69: the remaining exits of the CI scripts ------------------------
+
+    [Fact]
+    public async Task LintFailsClosedWhenSpectralCannotRun()
+    {
+        // Without docker there is no Spectral, which is the same outcome as an image
+        // that will not pull: nothing was linted, and that must not read as clean.
+        var path = MinimalPath();
+        Assert.Null(FindOnPath("docker", path));
+
+        var result = await ProcessRunner.RunAsync(
+            Root,
+            FindOnPath("dotnet") ?? "dotnet",
+            ["ci/lint-contract.cs"],
+            environment: new Dictionary<string, string?> { ["PATH"] = path });
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("Spectral did not run", result.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ContractCheckFailsClosedWhenNothingIsGenerated()
+    {
+        // MSBuild reads environment variables as properties, so this turns off this
+        // project's GenerateContract target for the script's own build: the build
+        // succeeds and produces no contract, which is the failure that must not pass.
+        var result = await ProcessRunner.RunAsync(
+            Root,
+            "dotnet",
+            ["ci/check-contract.cs"],
+            environment: new Dictionary<string, string?> { ["GenerateContract"] = "false" });
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("could not generate the contract", result.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SecretScanPassesOnCleanRange()
+    {
+        var repo = await RepoWithCommittedFileAsync("notes.txt", "nothing secret here" + Environment.NewLine);
+        try
+        {
+            var result = await ScanAsync(repo, "HEAD~1..HEAD");
+
+            Assert.True(result.ExitCode == 0, $"a clean range did not pass: {result.Output}");
+            Assert.Contains("found no secret", result.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTree(repo);
+        }
+    }
+
+    /// <summary>
+    /// A PATH with only what dotnet needs to run a file-based app. gitleaks and docker
+    /// live elsewhere, which each test that uses this asserts before relying on it.
+    /// </summary>
+    private static string MinimalPath() => string.Join(
+        Path.PathSeparator,
+        new[] { Path.GetDirectoryName(FindOnPath("dotnet")), Environment.SystemDirectory }
+            .Where(directory => !string.IsNullOrEmpty(directory)));
 
     // ---- helpers -------------------------------------------------------------
 

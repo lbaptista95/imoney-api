@@ -78,6 +78,18 @@ public sealed class SeedTests(PostgresFixture postgres)
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("could not reach the database", result.Output, StringComparison.OrdinalIgnoreCase);
+
+        // The prefix is ours; the claim is that the seed prints the connection error
+        // itself. `host:port` comes only from Npgsql's message - the connection string
+        // spells it `Host=...;Port=...`. It is looked for on the seed's own line: EF Core
+        // logs the same failure separately, and a search of the whole output was
+        // satisfied by that log even with the seed's reason dropped.
+        var seedLines = result.Output
+            .Split('\n')
+            .Where(line => line.Contains("seed: could not reach the database:", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(seedLines);
+        Assert.Contains(seedLines, line => line.Contains("127.0.0.1:1", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -44,6 +44,22 @@ public sealed class AccountsTests(PostgresFixture postgres)
                 Assert.True(account.TryGetProperty(field, out _), $"account is missing '{field}': {account}");
             }
         }
+
+        // And each field carries the stored value: present-but-wrong - every balance
+        // served as 0, a name in the provider field - is still a broken contract, and
+        // presence alone let it through (F1 of the second verification).
+        await using var db = Db(connectionString);
+        var stored = await db.Accounts.ToDictionaryAsync(a => a.Id, Ct);
+
+        foreach (var account in body.RootElement.EnumerateArray())
+        {
+            var id = account.GetProperty("id").GetGuid();
+            Assert.True(stored.TryGetValue(id, out var row), $"account {id} is not in the database");
+            Assert.Equal(row!.Provider, account.GetProperty("provider").GetString());
+            Assert.Equal(row.Kind.ToString(), account.GetProperty("kind").GetString());
+            Assert.Equal(row.Name, account.GetProperty("name").GetString());
+            Assert.Equal(row.Balance, account.GetProperty("balance").GetDecimal());
+        }
     }
 
     [Fact]
