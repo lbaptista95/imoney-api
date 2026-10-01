@@ -1,6 +1,13 @@
+using Api.Features;
+using Api.Features.Accounts;
+using Api.Features.Transactions;
+using Api.Infrastructure.Auth;
 using Api.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +26,18 @@ builder.Services.AddHealthChecks()
         name: "postgres",
         failureStatus: HealthStatus.Unhealthy);
 
+builder.Services.AddOptions<SharedSecretOptions>()
+    .Bind(builder.Configuration.GetSection(SharedSecretOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<SharedSecretOptions>, SharedSecretOptionsValidator>();
+
+builder.Services.AddAuthentication(SharedSecretAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, SharedSecretAuthenticationHandler>(
+        SharedSecretAuthenticationHandler.SchemeName,
+        configureOptions: null);
+builder.Services.AddAuthorization();
+
+builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -39,10 +58,35 @@ if (app.Environment.IsDevelopment())
     await db.Database.MigrateAsync();
 }
 
+// Turns an unhandled failure into problem+json with nothing internal in it. The
+// diagnosis is logged by the framework; the body says only that it failed.
+app.UseExceptionHandler(new ExceptionHandlerOptions
+{
+    AllowStatusCode404Response = true,
+    ExceptionHandler = async context =>
+    {
+        var feature = context.Features.Get<IExceptionHandlerFeature>();
+        context.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Api.UnhandledException")
+            .LogError(feature?.Error, "unhandled failure serving {Path}", context.Request.Path);
+
+        await Problems.InternalError().ExecuteAsync(context);
+    },
+});
+
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapOpenApi();
 
 // Outside the /v1 group on purpose: health exposes no data, so it needs no token.
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health").AllowAnonymous();
+
+// One group, so a route added later is guarded by default rather than by remembering.
+var v1 = app.MapGroup("/v1").RequireAuthorization();
+v1.MapGet("/accounts", GetAccounts.HandleAsync);
+v1.MapGet("/transactions", GetTransactions.HandleAsync);
 
 app.Run();
 

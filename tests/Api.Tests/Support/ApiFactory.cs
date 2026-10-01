@@ -14,7 +14,8 @@ namespace Api.Tests.Support;
 public sealed class ApiFactory(
     string connectionString,
     string environment = "Development",
-    string? sharedToken = "test-token")
+    string? sharedToken = "test-token",
+    IDictionary<string, string?>? extraSettings = null)
     : WebApplicationFactory<Program>
 {
     private readonly List<string> _logLines = [];
@@ -45,6 +46,11 @@ public sealed class ApiFactory(
             if (sharedToken is not null)
             {
                 settings["Auth:SharedToken"] = sharedToken;
+            }
+
+            foreach (var (key, value) in extraSettings ?? new Dictionary<string, string?>())
+            {
+                settings[key] = value;
             }
 
             config.AddInMemoryCollection(settings);

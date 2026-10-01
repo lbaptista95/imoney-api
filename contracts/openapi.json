@@ -4,5 +4,62 @@
     "title": "Api | v1",
     "version": "1.0.0"
   },
-  "paths": { }
+  "paths": {
+    "/v1/accounts": {
+      "get": {
+        "tags": [
+          "GetAccounts"
+        ],
+        "summary": "Lists every account.",
+        "description": "A named method, not a lambda: the OpenAPI generator reads XML comments only from methods.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/transactions": {
+      "get": {
+        "tags": [
+          "GetTransactions"
+        ],
+        "summary": "Lists transactions, newest first, paginated by an opaque cursor.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "GetAccounts"
+    },
+    {
+      "name": "GetTransactions"
+    }
+  ]
 }

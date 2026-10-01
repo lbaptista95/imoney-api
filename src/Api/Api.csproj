@@ -11,12 +11,39 @@
     <!-- contracts/openapi.json is generated on build and committed. The generator
          names its output after the project and offers no way to override that, so it
          writes into obj and the target below copies it to the committed path. -->
-    <OpenApiGenerateDocumentsOnBuild>true</OpenApiGenerateDocumentsOnBuild>
+    <!-- The package's own build hook is off: this project drives generation from
+         the GenerateContract target below, so the token stays scoped to that process. -->
+    <OpenApiGenerateDocumentsOnBuild>false</OpenApiGenerateDocumentsOnBuild>
     <OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)\obj\openapi</OpenApiDocumentsDirectory>
     <ContractPath>$(MSBuildProjectDirectory)\..\..\contracts\openapi.json</ContractPath>
   </PropertyGroup>
 
-  <Target Name="CopyGeneratedContract" AfterTargets="GenerateOpenApiDocuments">
+  <!-- The document generator starts this application to read its routes, and the
+       application refuses to start without Auth:SharedToken (AC 13). Rather than
+       carve an exemption into that guard, the package's build hook is turned off and
+       this target invokes the generator itself, handing the value to that one process
+       through EnvironmentVariables. Nothing else in the build, the test run or the
+       runtime sees it, and the guard keeps no special case for it.
+
+       It mirrors the package's command construction, so if a package update changes
+       that command this target can drift. What catches the drift is the contract
+       check: it fails when the committed document stops matching a clean build. -->
+  <Target Name="GenerateContract" AfterTargets="Build">
+    <PropertyGroup>
+      <_ContractOutputPath>$([System.IO.Path]::GetFullPath('$(OpenApiDocumentsDirectory)').TrimEnd('\'))</_ContractOutputPath>
+      <_GetDocumentDll>$(NuGetPackageRoot)microsoft.extensions.apidescription.server\10.0.12\tools\dotnet-getdocument.dll</_GetDocumentDll>
+      <_GetDocumentCommand>dotnet "$(_GetDocumentDll)" --assembly "$(TargetPath)" --file-list "$(MSBuildProjectDirectory)\obj\openapi-files.cache" --framework "$(TargetFrameworkMoniker)" --output "$(_ContractOutputPath)" --project "$(MSBuildProjectName)" --assets-file "$(ProjectAssetsFile)"</_GetDocumentCommand>
+    </PropertyGroup>
+
+    <!-- EnvironmentVariables is scoped to this process only. The value is not a
+         credential: it authenticates nothing, because this process never listens on
+         a port - it loads the assembly, reads the routes and exits. -->
+    <Exec Command="$(_GetDocumentCommand)"
+          LogStandardErrorAsError="true"
+          EnvironmentVariables="Auth__SharedToken=openapi-document-generation-only" />
+  </Target>
+
+  <Target Name="CopyGeneratedContract" AfterTargets="GenerateContract">
     <Copy SourceFiles="$(MSBuildProjectDirectory)\obj\openapi\Api.json"
           DestinationFiles="$(ContractPath)" />
   </Target>
