@@ -86,13 +86,38 @@ switch (scan.ExitCode)
 
 async Task EnsureBinaryAsync()
 {
-    // The archive is kept and re-verified on every run: a cached binary nobody checks
-    // is a binary anyone could have replaced.
-    if (File.Exists(archive) && Sha256Of(archive) == sha256 && File.Exists(binary))
+    // Only the archive is trusted, and only after its checksum matches. The binary is
+    // extracted from it again on every run, so a binary swapped in the cache is
+    // overwritten before it can run. The old shortcut re-verified the archive and then
+    // ran whatever binary sat next to it (F9 of the third verification).
+    if (!(File.Exists(archive) && Sha256Of(archive) == sha256))
     {
-        return;
+        await DownloadVerifiedArchiveAsync();
     }
 
+    if (File.Exists(binary))
+    {
+        File.Delete(binary);
+    }
+
+    if (asset.EndsWith(".zip", StringComparison.Ordinal))
+    {
+        ZipFile.ExtractToDirectory(archive, cache, overwriteFiles: true);
+    }
+    else
+    {
+        await using var gzip = new GZipStream(File.OpenRead(archive), CompressionMode.Decompress);
+        await TarFile.ExtractToDirectoryAsync(gzip, cache, overwriteFiles: true);
+    }
+
+    if (!File.Exists(binary))
+    {
+        throw new InvalidOperationException($"{asset} did not contain {Path.GetFileName(binary)}");
+    }
+}
+
+async Task DownloadVerifiedArchiveAsync()
+{
     Directory.CreateDirectory(cache);
     var source = Environment.GetEnvironmentVariable("GITLEAKS_DOWNLOAD_URL")
         ?? $"https://github.com/gitleaks/gitleaks/releases/download/v{Version}/{asset}";
@@ -119,21 +144,6 @@ async Task EnsureBinaryAsync()
     }
 
     File.Move(partial, archive, overwrite: true);
-
-    if (asset.EndsWith(".zip", StringComparison.Ordinal))
-    {
-        ZipFile.ExtractToDirectory(archive, cache, overwriteFiles: true);
-    }
-    else
-    {
-        await using var gzip = new GZipStream(File.OpenRead(archive), CompressionMode.Decompress);
-        await TarFile.ExtractToDirectoryAsync(gzip, cache, overwriteFiles: true);
-    }
-
-    if (!File.Exists(binary))
-    {
-        throw new InvalidOperationException($"{asset} did not contain {Path.GetFileName(binary)}");
-    }
 }
 
 static string Sha256Of(string path)

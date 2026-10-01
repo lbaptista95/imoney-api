@@ -8,12 +8,12 @@ public sealed record HealthResponse(string Status);
 
 public static class GetHealth
 {
+    // A named handler over the native HealthCheckService rather than MapHealthChecks,
+    // because the OpenAPI generator does not describe MapHealthChecks endpoints and the
+    // contract must list all three routes (AC 23). A // comment, not <remarks>: XML
+    // comments are published in the contract, and this note is for maintainers.
+
     /// <summary>Reports whether the API can reach its database.</summary>
-    /// <remarks>
-    /// A named handler over the native HealthCheckService rather than MapHealthChecks,
-    /// because the OpenAPI generator does not describe MapHealthChecks endpoints and
-    /// the contract must list all three routes (AC 23). The check itself is unchanged.
-    /// </remarks>
     public static async Task<IResult> HandleAsync(HealthCheckService health, CancellationToken cancellationToken)
     {
         var report = await health.CheckHealthAsync(cancellationToken);

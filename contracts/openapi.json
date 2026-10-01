@@ -11,7 +11,6 @@
           "GetHealth"
         ],
         "summary": "Reports whether the API can reach its database.",
-        "description": "A named handler over the native HealthCheckService rather than MapHealthChecks,\r\nbecause the OpenAPI generator does not describe MapHealthChecks endpoints and\r\nthe contract must list all three routes (AC 23). The check itself is unchanged.",
         "operationId": "GetHealth",
         "responses": {
           "200": {
@@ -43,7 +42,6 @@
           "GetAccounts"
         ],
         "summary": "Lists every account.",
-        "description": "A named method, not a lambda: the OpenAPI generator reads XML comments only from methods.",
         "operationId": "GetAccounts",
         "responses": {
           "200": {

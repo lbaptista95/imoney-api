@@ -279,16 +279,16 @@ public sealed partial class CiTests
     [Fact]
     public async Task LintFailsClosedWhenSpectralCannotRun()
     {
-        // Without docker there is no Spectral, which is the same outcome as an image
-        // that will not pull: nothing was linted, and that must not read as clean.
-        var path = MinimalPath();
-        Assert.Null(FindOnPath("docker", path));
-
+        // A Docker daemon nobody can reach: `docker run` fails before Spectral exists,
+        // which is the same outcome as an image that will not pull. Nothing was linted,
+        // and that must not read as clean. DOCKER_HOST rather than a stripped PATH, so
+        // the test means the same on the Linux runner, where dotnet and docker can share
+        // a directory.
         var result = await ProcessRunner.RunAsync(
             Root,
-            FindOnPath("dotnet") ?? "dotnet",
+            "dotnet",
             ["ci/lint-contract.cs"],
-            environment: new Dictionary<string, string?> { ["PATH"] = path });
+            environment: new Dictionary<string, string?> { ["DOCKER_HOST"] = "tcp://127.0.0.1:1" });
 
         Assert.Equal(2, result.ExitCode);
         Assert.Contains("Spectral did not run", result.Output, StringComparison.Ordinal);
@@ -324,6 +324,97 @@ public sealed partial class CiTests
         finally
         {
             DeleteTree(repo);
+        }
+    }
+
+    [Fact]
+    public void NoCiStepSwallowsItsFailure()
+    {
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(File.ReadAllText(Workflow)));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+        var continueOnError = new YamlScalarNode("continue-on-error");
+
+        var jobs = ((YamlMappingNode)root.Children[new YamlScalarNode("jobs")]).Children;
+        Assert.NotEmpty(jobs);
+
+        foreach (var (jobName, jobNode) in jobs)
+        {
+            var job = (YamlMappingNode)jobNode;
+            Assert.False(job.Children.ContainsKey(continueOnError), $"job {jobName} sets continue-on-error");
+
+            var steps = ((YamlSequenceNode)job.Children[new YamlScalarNode("steps")]).Cast<YamlMappingNode>().ToList();
+            foreach (var step in steps)
+            {
+                Assert.False(step.Children.ContainsKey(continueOnError), $"a step in {jobName} sets continue-on-error");
+
+                if (!step.Children.TryGetValue(new YamlScalarNode("run"), out var runNode))
+                {
+                    continue;
+                }
+
+                // GitHub expressions are evaluated before the shell sees the line, and
+                // their `||` is not a shell operator; only the shell text is judged.
+                var shell = Expression().Replace(((YamlScalarNode)runNode).Value ?? string.Empty, "EXPR");
+
+                foreach (var (pattern, meaning) in SwallowingForms)
+                {
+                    Assert.False(
+                        Regex.IsMatch(shell, pattern),
+                        $"step `{shell.Trim()}` can hide its own failure: {meaning}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Each shell form that turns a failing command into a passing step. The step's exit
+    /// code is the last command's, so anything that runs after a failure and succeeds -
+    /// or a pipe whose last stage succeeds - makes the step green.
+    /// </summary>
+    private static readonly (string Pattern, string Meaning)[] SwallowingForms =
+    [
+        (@"\|\|", "`||` runs something else when the command fails"),
+        (@"(?<![|])\|(?![|])", "a pipe reports the last stage's exit code, not the first's"),
+        (@";\s*true\b", "`; true` ends the step with success"),
+        (@"\bset\s+\+e\b", "`set +e` keeps going after a failure"),
+        (@"\bexit\s+0\b", "`exit 0` ends the step with success"),
+    ];
+
+    [GeneratedRegex(@"\$\{\{.*?\}\}", RegexOptions.Singleline)]
+    private static partial Regex Expression();
+
+    [Fact]
+    public async Task CachedGitleaksIsReplacedFromTheVerifiedArchive()
+    {
+        var cache = TempDirectory();
+        var repo = await RepoWithCommittedFileAsync("notes.txt", "nothing secret here" + Environment.NewLine);
+        var environment = new Dictionary<string, string?> { ["GITLEAKS_CACHE_DIR"] = cache };
+
+        try
+        {
+            // A first run fills the cache with the verified archive and its binary.
+            var first = await ScanAsync(repo, "HEAD~1..HEAD", environment);
+            Assert.True(first.ExitCode == 0, $"the first scan did not pass: {first.Output}");
+
+            // Then the binary is replaced in place, as anyone with access to the temp
+            // directory could. The archive stays genuine, so its checksum still matches.
+            var binary = Directory
+                .GetFiles(cache, OperatingSystem.IsWindows() ? "gitleaks.exe" : "gitleaks", SearchOption.AllDirectories)
+                .Single();
+            await File.WriteAllTextAsync(binary, "not the real gitleaks", Ct);
+
+            // Had the swapped file run, it would not execute and the scan would exit 2.
+            // It passes only because the binary is extracted again from the verified
+            // archive before running.
+            var second = await ScanAsync(repo, "HEAD~1..HEAD", environment);
+            Assert.True(second.ExitCode == 0, $"the swapped binary was not replaced: {second.Output}");
+            Assert.Contains("found no secret", second.Output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTree(repo);
+            DeleteTree(cache);
         }
     }
 

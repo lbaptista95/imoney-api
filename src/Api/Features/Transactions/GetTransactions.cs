@@ -16,7 +16,24 @@ public sealed record TransactionResponse(
 /// <summary>A page of transactions, newest first.</summary>
 /// <param name="Items">The page's rows.</param>
 /// <param name="NextCursor">An opaque cursor for the next page, or null on the last page.</param>
-public sealed record TransactionPage(IReadOnlyList<TransactionResponse> Items, string? NextCursor);
+public sealed record TransactionPage(IReadOnlyList<TransactionResponse> Items, string? NextCursor)
+{
+    /// <summary>
+    /// Builds a page from up to <paramref name="pageSize"/> + 1 fetched rows: the extra
+    /// row only says that a next page exists and is never returned. Its own method so the
+    /// boundary - a last page that is exactly full - is proven where it is decided (C75).
+    /// </summary>
+    public static TransactionPage Assemble(IReadOnlyList<TransactionResponse> fetched, int pageSize)
+    {
+        var hasMore = fetched.Count > pageSize;
+        var items = hasMore ? fetched.Take(pageSize).ToList() : fetched;
+        var next = hasMore && items.Count > 0
+            ? new TransactionCursor(items[^1].OccurredAt, items[^1].Id).Encode()
+            : null;
+
+        return new TransactionPage(items, next);
+    }
+}
 
 /// <summary>
 /// Turns the requested `limit` into a page size. Its own type so the decision table can
@@ -101,12 +118,6 @@ public static class GetTransactions
                 t.CategoryId))
             .ToListAsync(cancellationToken);
 
-        var hasMore = rows.Count > pageSize;
-        var items = hasMore ? rows[..pageSize] : rows;
-        var next = hasMore && items.Count > 0
-            ? new TransactionCursor(items[^1].OccurredAt, items[^1].Id).Encode()
-            : null;
-
-        return Results.Ok(new TransactionPage(items, next));
+        return Results.Ok(TransactionPage.Assemble(rows, pageSize));
     }
 }

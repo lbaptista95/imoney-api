@@ -134,6 +134,7 @@ public sealed class TransactionsTests(PostgresFixture postgres)
     [InlineData("not base64 at all!!")]
     [InlineData("aGVsbG8gd29ybGQ=")] // base64 of "hello world": valid encoding, wrong payload
     [InlineData("TRUNCATED")]
+    [InlineData("bGl4b3wwZjhmYWQ1Yi1kOWNiLTQ2OWYtYTE2NS03MDg2NzcyODk1MGU=")] // base64 of "lixo|<valid guid>": reaches the date branch
     public async Task UndecodableCursorReturns400NamingCursor(string cursor)
     {
         var connectionString = await DatabaseWithAsync(5);
@@ -282,6 +283,22 @@ public sealed class TransactionsTests(PostgresFixture postgres)
         Assert.DoesNotContain("Exception", body, StringComparison.Ordinal);
         Assert.DoesNotContain(password, body, StringComparison.Ordinal);
         Assert.DoesNotContain("Host=", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(100, new[] { 50, 50 })] // the last page exactly full: no cursor after it
+    [InlineData(51, new[] { 50, 1 })]   // one row past a page: a cursor, then a page of one
+    public async Task FullLastPageEndsTheWalk(int rows, int[] pageSizes)
+    {
+        var connectionString = await DatabaseWithAsync(rows);
+        await using var factory = new ApiFactory(connectionString, sharedToken: Token);
+
+        var pages = await WalkAsync(Authorized(factory), limit: 50);
+
+        // WalkAsync follows next_cursor until it is null, so an extra empty page - the
+        // client fetching once more after a full last page - shows up as a third count.
+        Assert.Equal(pageSizes, pages.Select(p => p.Items.Count));
+        Assert.Null(pages[^1].NextCursor);
     }
 
     [Fact]

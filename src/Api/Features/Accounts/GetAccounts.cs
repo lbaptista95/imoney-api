@@ -18,8 +18,10 @@ public sealed record AccountResponse(
 
 public static class GetAccounts
 {
+    // A named method, not a lambda: the OpenAPI generator reads XML comments only from
+    // methods. Implementation notes stay in // comments; XML comments reach the contract.
+
     /// <summary>Lists every account.</summary>
-    /// <remarks>A named method, not a lambda: the OpenAPI generator reads XML comments only from methods.</remarks>
     public static async Task<IResult> HandleAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         var accounts = await db.Accounts
