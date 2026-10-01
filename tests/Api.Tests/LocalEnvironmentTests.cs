@@ -129,7 +129,10 @@ public sealed class LocalEnvironmentTests(PostgresFixture postgres)
 
         // A category that does not exist is rejected by the foreign key.
         db.Transactions.Add(NewTransaction(account.Id, "txn-ghost", categoryId: Guid.NewGuid()));
-        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync(Ct));
+        await ConstraintAssert.ViolatesAsync(
+            () => db.SaveChangesAsync(Ct),
+            ConstraintAssert.ForeignKeyViolation,
+            "FK_transactions_categories_category_id");
         db.ChangeTracker.Clear();
 
         // An existing category is accepted.

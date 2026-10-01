@@ -80,7 +80,10 @@ public sealed class AccountsTests(PostgresFixture postgres)
         await db.SaveChangesAsync(Ct);
 
         db.Accounts.Add(NewAccount("pluggy", "same-id"));
-        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync(Ct));
+        await ConstraintAssert.ViolatesAsync(
+            () => db.SaveChangesAsync(Ct),
+            ConstraintAssert.UniqueViolation,
+            "ix_accounts_provider_provider_account_id");
         db.ChangeTracker.Clear();
 
         // The same provider id under another provider is a different account: the

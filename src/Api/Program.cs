@@ -37,6 +37,11 @@ builder.Services.AddAuthentication(SharedSecretAuthenticationHandler.SchemeName)
         configureOptions: null);
 builder.Services.AddAuthorization();
 
+// snake_case on the wire, because the plan's Surface names the fields that way
+// (`next_cursor`, `account_id`, `occurred_at`) and the app is generated from it.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower);
+
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 

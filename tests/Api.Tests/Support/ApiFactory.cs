@@ -58,7 +58,13 @@ public sealed class ApiFactory(
 
         builder.ConfigureLogging(logging =>
         {
+            // SetMinimumLevel alone is not enough: appsettings.json carries a
+            // `Logging:LogLevel:Default` rule, and a configured rule overrides the
+            // minimum level, so the capture silently stopped at Information. A
+            // provider-specific rule outranks it. C37 found this by letting an
+            // amount logged at Debug through.
             logging.SetMinimumLevel(LogLevel.Trace);
+            logging.AddFilter<CapturingLoggerProvider>(category: null, level: LogLevel.Trace);
             logging.AddProvider(new CapturingLoggerProvider(line =>
             {
                 lock (_logLines)
