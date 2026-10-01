@@ -18,13 +18,38 @@ public sealed record TransactionResponse(
 /// <param name="NextCursor">An opaque cursor for the next page, or null on the last page.</param>
 public sealed record TransactionPage(IReadOnlyList<TransactionResponse> Items, string? NextCursor);
 
-public static class GetTransactions
+/// <summary>
+/// Turns the requested `limit` into a page size. Its own type so the decision table can
+/// be proven where it is decided (C63), not only through HTTP.
+/// </summary>
+public static class PageLimit
 {
     /// <summary>The page size used when the caller asks for none.</summary>
-    public const int DefaultLimit = 50;
+    public const int Default = 50;
 
     /// <summary>The largest page the API will serve; a bigger request is clamped to it.</summary>
-    public const int MaxLimit = 200;
+    public const int Max = 200;
+
+    /// <summary>
+    /// False for zero or below, which is a 400. Above the maximum is clamped rather than
+    /// rejected: AC 19 asks for the largest allowed page, not an error.
+    /// </summary>
+    public static bool TryResolve(int? requested, out int pageSize)
+    {
+        if (requested is <= 0)
+        {
+            pageSize = 0;
+            return false;
+        }
+
+        pageSize = Math.Min(requested ?? Default, Max);
+        return true;
+    }
+}
+
+public static class GetTransactions
+{
+    public const int DefaultLimit = PageLimit.Default;
 
     /// <summary>Lists transactions, newest first, paginated by an opaque cursor.</summary>
     public static async Task<IResult> HandleAsync(
@@ -33,16 +58,12 @@ public static class GetTransactions
         string? cursor = null,
         int? limit = null)
     {
-        if (limit is <= 0)
+        if (!PageLimit.TryResolve(limit, out var pageSize))
         {
             return Problems.BadRequest(
                 "limit",
                 $"'limit' must be greater than zero. Omit it for the default of {DefaultLimit}.");
         }
-
-        // Clamped rather than rejected: AC 19 asks for the largest allowed page, not
-        // an error, when the caller asks for more than the API will serve.
-        var pageSize = Math.Min(limit ?? DefaultLimit, MaxLimit);
 
         TransactionCursor? decoded = null;
         if (!string.IsNullOrEmpty(cursor))

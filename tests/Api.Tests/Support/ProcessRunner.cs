@@ -26,9 +26,18 @@ public static class ProcessRunner
             startInfo.ArgumentList.Add(arg);
         }
 
+        // A null value removes the variable, so a test can prove what happens when it
+        // is absent - not merely empty - in the child's environment.
         foreach (var (key, value) in environment ?? new Dictionary<string, string?>())
         {
-            startInfo.Environment[key] = value;
+            if (value is null)
+            {
+                startInfo.Environment.Remove(key);
+            }
+            else
+            {
+                startInfo.Environment[key] = value;
+            }
         }
 
         using var process = Process.Start(startInfo)

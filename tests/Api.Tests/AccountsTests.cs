@@ -94,6 +94,36 @@ public sealed class AccountsTests(PostgresFixture postgres)
         Assert.Equal(2, await db.Accounts.CountAsync(Ct));
     }
 
+    [Fact]
+    public async Task AccountKindIsEnforcedByCheckConstraint()
+    {
+        var connectionString = await FreshMigratedDatabaseAsync();
+
+        // Both allowed kinds first: the statement is sound, so the failure below can
+        // only be the constraint.
+        await InsertAccountRawAsync(connectionString, "CHECKING");
+        await InsertAccountRawAsync(connectionString, "CREDIT_CARD");
+
+        await ConstraintAssert.ViolatesAsync(
+            () => InsertAccountRawAsync(connectionString, "SAVINGS"),
+            ConstraintAssert.CheckViolation,
+            "ck_accounts_kind");
+    }
+
+    private static async Task InsertAccountRawAsync(string connectionString, string kind)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO accounts (id, provider, provider_account_id, kind, name, balance)
+            VALUES (gen_random_uuid(), 'raw', @pid, @kind, 'Conta', 0)
+            """;
+        command.Parameters.AddWithValue("pid", Guid.NewGuid().ToString());
+        command.Parameters.AddWithValue("kind", kind);
+        await command.ExecuteNonQueryAsync(Ct);
+    }
+
     private const string UnreachablePassword = "unreachable-db-password";
 
     private static async Task<HttpResponseMessage> AccountsAgainstUnreachableDatabase()

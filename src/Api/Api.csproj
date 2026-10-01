@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Where `dotnet user-secrets` keeps Auth:SharedToken for local runs (door 4).
+         Without it the Development host never reads user-secrets at all. -->
+    <UserSecretsId>imoney-api</UserSecretsId>
     <!-- Named handlers carry XML comments into the generated document; the
          OpenAPI generator reads them only from methods, never from lambdas. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -28,7 +31,7 @@
        It mirrors the package's command construction, so if a package update changes
        that command this target can drift. What catches the drift is the contract
        check: it fails when the committed document stops matching a clean build. -->
-  <Target Name="GenerateContract" AfterTargets="Build">
+  <Target Name="GenerateContract" AfterTargets="Build" Condition=" '$(GenerateContract)' != 'false' ">
     <PropertyGroup>
       <_ContractOutputPath>$([System.IO.Path]::GetFullPath('$(OpenApiDocumentsDirectory)').TrimEnd('\'))</_ContractOutputPath>
       <_GetDocumentDll>$(NuGetPackageRoot)microsoft.extensions.apidescription.server\10.0.12\tools\dotnet-getdocument.dll</_GetDocumentDll>
@@ -41,9 +44,8 @@
     <Exec Command="$(_GetDocumentCommand)"
           LogStandardErrorAsError="true"
           EnvironmentVariables="Auth__SharedToken=openapi-document-generation-only" />
-  </Target>
 
-  <Target Name="CopyGeneratedContract" AfterTargets="GenerateContract">
+    <!-- Inside the same target, so turning generation off turns the copy off too. -->
     <Copy SourceFiles="$(MSBuildProjectDirectory)\obj\openapi\Api.json"
           DestinationFiles="$(ContractPath)" />
   </Target>

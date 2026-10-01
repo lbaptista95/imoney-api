@@ -87,12 +87,17 @@ public sealed class SeedTests(PostgresFixture postgres)
 
         var failed = await SeedProcess.RunAsync(
             $"Host=127.0.0.1;Port=1;Database=imoney;Username=imoney;Password={password};Timeout=2");
-        var succeeded = await SeedProcess.RunAsync(await FreshDatabaseAsync());
+        var reachable = await FreshDatabaseAsync();
+        var succeeded = await SeedProcess.RunAsync(reachable);
 
-        // Both runs, because the failing one is the one that quotes the connection
-        // string and the succeeding one is the one nobody thinks to check.
+        // Each run is searched for the password it was actually given. The succeeding
+        // run used to be searched for the failing run's password, which it never saw,
+        // so it could print its own connection string and still pass (F3).
+        var reachablePassword = new Npgsql.NpgsqlConnectionStringBuilder(reachable).Password;
+        Assert.False(string.IsNullOrEmpty(reachablePassword), "the reachable database has no password to look for");
+
         Assert.DoesNotContain(password, failed.Output, StringComparison.Ordinal);
-        Assert.DoesNotContain(password, succeeded.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain(reachablePassword, succeeded.Output, StringComparison.Ordinal);
         Assert.Equal(0, succeeded.ExitCode);
     }
 

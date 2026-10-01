@@ -1,16 +1,29 @@
-# Local development only. Nothing here is deployed: hosting is a later feature,
-# and the password below guards a throwaway container on localhost.
+# Local development only. Nothing here is deployed.
+#
+# No secret is committed: the token and the database password are required from
+# the environment, and `docker compose` refuses to start without them. Set them in
+# your shell, or in a `.env` file next to this one (git ignores it):
+#
+#   IMONEY_SHARED_TOKEN=<any value; send it as `Authorization: Bearer <value>`>
+#   IMONEY_DB_PASSWORD=<any value>
+#
+# Both ports listen on 127.0.0.1 only, so nothing else on the network reaches the
+# API or the database. The constitution allows real data in this local database.
 services:
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: imoney
       POSTGRES_USER: imoney
-      POSTGRES_PASSWORD: imoney_local_dev
+      POSTGRES_PASSWORD: ${IMONEY_DB_PASSWORD:?set IMONEY_DB_PASSWORD in the environment or in .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U imoney -d imoney"]
+      # Over TCP (-h 127.0.0.1), the way the API connects. On a fresh volume the image
+      # first runs a temporary init server on the Unix socket only, then restarts;
+      # checked over the socket, this reported healthy during init, the API connected
+      # over TCP in the restart window, and its Development boot failed fast (AC 5a).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U imoney -d imoney"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -26,10 +39,10 @@ services:
       ASPNETCORE_HTTP_PORTS: "8080"
       # Reached by the compose service name, not localhost: the API runs in its
       # own container and localhost there is the API itself.
-      ConnectionStrings__Default: "Host=db;Port=5432;Database=imoney;Username=imoney;Password=imoney_local_dev"
-      Auth__SharedToken: "local-dev-token-not-a-secret"
+      ConnectionStrings__Default: "Host=db;Port=5432;Database=imoney;Username=imoney;Password=${IMONEY_DB_PASSWORD:?set IMONEY_DB_PASSWORD in the environment or in .env}"
+      Auth__SharedToken: ${IMONEY_SHARED_TOKEN:?set IMONEY_SHARED_TOKEN in the environment or in .env}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       db:
         condition: service_healthy

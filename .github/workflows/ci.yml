@@ -28,6 +28,15 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # Before any build, on purpose: building regenerates contracts/openapi.json in
+      # place, so a check after it would compare the file with itself and always
+      # pass. Both contract steps must see the file as committed.
+      - name: Contract is current
+        run: dotnet ci/check-contract.cs
+
+      - name: Contract lint
+        run: dotnet ci/lint-contract.cs
+
       - name: Build
         run: dotnet build
 
@@ -39,12 +48,6 @@ jobs:
 
       - name: Proof runner fails closed
         run: dotnet run ci/assert-proof-runner-fails-closed.cs
-
-      - name: Contract is current
-        run: dotnet ci/check-contract.cs
-
-      - name: Contract lint
-        run: dotnet ci/lint-contract.cs
 
       # Independent of the local pre-commit hook, which `git commit --no-verify`
       # skips. On a pull request the range is what the branch adds to main; on main

@@ -7,9 +7,11 @@ RUN dotnet restore src/Api/Api.csproj
 COPY src/ src/
 # The contract is generated and committed by a developer build, never inside the
 # image: the CI check compares the committed file against a clean build, and a
-# second generator here would be a second thing to keep true.
+# second generator here would be a second thing to keep true. GenerateContract is
+# this project's own target - the package's hook is already off - so it is the
+# switch that actually stops generation here.
 RUN dotnet publish src/Api/Api.csproj -c Release -o /app \
-    -p:OpenApiGenerateDocumentsOnBuild=false
+    -p:GenerateContract=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app

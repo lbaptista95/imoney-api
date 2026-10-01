@@ -44,8 +44,8 @@ public sealed class ComposeTests
             Assert.Contains("api healthy", apiHealth.Output);
             Assert.Contains("db healthy", apiHealth.Output);
 
-            // Asserted from inside the API container: it is the API's own view of the
-            // database that matters, not the host's.
+            // Read inside the database container: the table exists only because the
+            // API, reaching the database by its service name, applied the migration.
             var query = await Docker(
                 project,
                 "exec",
@@ -76,6 +76,11 @@ public sealed class ComposeTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        // compose.yml requires both from the environment and commits neither. Values
+        // set here outrank any developer's .env, so this run is the same everywhere.
+        startInfo.Environment["IMONEY_SHARED_TOKEN"] = "c1-compose-token";
+        startInfo.Environment["IMONEY_DB_PASSWORD"] = "c1-compose-password";
+
         startInfo.ArgumentList.Add("compose");
         startInfo.ArgumentList.Add("-f");
         startInfo.ArgumentList.Add("compose.yml");

@@ -62,6 +62,39 @@ public sealed partial class CiTests
     }
 
     [Fact]
+    public void CiChecksContractBeforeAnyBuild()
+    {
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(File.ReadAllText(Workflow)));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+
+        foreach (var job in ((YamlMappingNode)root.Children[new YamlScalarNode("jobs")]).Children.Values.Cast<YamlMappingNode>())
+        {
+            var runs = ((YamlSequenceNode)job.Children[new YamlScalarNode("steps")])
+                .Cast<YamlMappingNode>()
+                .Select(step => step.Children.TryGetValue(new YamlScalarNode("run"), out var run)
+                    ? ((YamlScalarNode)run).Value ?? string.Empty
+                    : string.Empty)
+                .ToList();
+
+            var firstBuild = runs.FindIndex(run =>
+                run.StartsWith("dotnet build", StringComparison.Ordinal)
+                || run.StartsWith("dotnet test", StringComparison.Ordinal));
+            Assert.True(firstBuild >= 0, "the job never builds");
+
+            // The build regenerates contracts/openapi.json in place, so a check after it
+            // compares the file with itself and always passes (F1). Both contract steps
+            // must see the committed file, which means running before any build.
+            foreach (var script in new[] { "ci/check-contract.cs", "ci/lint-contract.cs" })
+            {
+                var index = runs.FindIndex(run => run.Contains(script, StringComparison.Ordinal));
+                Assert.True(index >= 0, $"{script} is not run");
+                Assert.True(index < firstBuild, $"{script} runs at step {index}, after the build at step {firstBuild}");
+            }
+        }
+    }
+
+    [Fact]
     public void CiWorkflowNeedsNoCloudSubscription()
     {
         var text = File.ReadAllText(Workflow);

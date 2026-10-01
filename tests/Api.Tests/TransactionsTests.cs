@@ -181,6 +181,7 @@ public sealed class TransactionsTests(PostgresFixture postgres)
         // ever saw them - and the claim is about the database. The valid insert first
         // proves the statement itself is sound, so a failure below is the constraint.
         await InsertRawAsync(connectionString, accountId, type: "DEBIT", status: "POSTED");
+        await InsertRawAsync(connectionString, accountId, type: "CREDIT", status: "PENDING");
 
         await ConstraintAssert.ViolatesAsync(
             () => InsertRawAsync(connectionString, accountId, type: "FOO", status: "POSTED"),
@@ -281,6 +282,77 @@ public sealed class TransactionsTests(PostgresFixture postgres)
         Assert.DoesNotContain("Exception", body, StringComparison.Ordinal);
         Assert.DoesNotContain(password, body, StringComparison.Ordinal);
         Assert.DoesNotContain("Host=", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TransactionsCarryEverySurfaceField()
+    {
+        var connectionString = await DatabaseWithAsync(0);
+        Guid accountId;
+        Guid categoryId;
+
+        // Rows whose every field is known, so the response is compared against what is
+        // stored, field by field - including a null category_id, which is a value the
+        // Surface allows and a client has to be able to read.
+        await using (var db = Db(connectionString))
+        {
+            var account = await NewAccountAsync(db);
+            accountId = account.Id;
+            var category = new Features.Categories.Category { Id = Guid.NewGuid(), Name = "Mercado" };
+            db.Categories.Add(category);
+            categoryId = category.Id;
+
+            var at = new DateTimeOffset(2026, 9, 1, 12, 0, 0, TimeSpan.Zero);
+            var withCategory = NewTransaction(account.Id, "test", "f-1", at, 123.45m);
+            withCategory.Status = TransactionStatus.PENDING;
+            withCategory.CategoryId = category.Id;
+            var withoutCategory = NewTransaction(account.Id, "test", "f-2", at.AddDays(-1), 678.90m);
+
+            db.Transactions.AddRange(withCategory, withoutCategory);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using var factory = new ApiFactory(connectionString, sharedToken: Token);
+        var response = await Authorized(factory).GetAsync("/v1/transactions", Ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var items = body.RootElement.GetProperty("items").EnumerateArray().ToList();
+        Assert.Equal(2, items.Count);
+
+        var first = items[0];
+        Assert.Equal(accountId, first.GetProperty("account_id").GetGuid());
+        Assert.Equal(123.45m, first.GetProperty("amount").GetDecimal());
+        Assert.Equal("PENDING", first.GetProperty("status").GetString());
+        Assert.Equal(categoryId, first.GetProperty("category_id").GetGuid());
+
+        var second = items[1];
+        Assert.Equal(accountId, second.GetProperty("account_id").GetGuid());
+        Assert.Equal(678.90m, second.GetProperty("amount").GetDecimal());
+        Assert.Equal("POSTED", second.GetProperty("status").GetString());
+
+        // Present and null, not absent: a missing property and a null one are different
+        // contracts for the generated client.
+        Assert.True(second.TryGetProperty("category_id", out var nullCategory), "category_id is missing");
+        Assert.Equal(JsonValueKind.Null, nullCategory.ValueKind);
+    }
+
+    [Fact]
+    public async Task TransactionAccountForeignKeyIsEnforced()
+    {
+        var connectionString = await DatabaseWithAsync(0);
+        await using var db = Db(connectionString);
+        var account = await NewAccountAsync(db);
+
+        // The valid row first, so a failure below is the foreign key and nothing else.
+        db.Transactions.Add(NewTransaction(account.Id, "test", "fk-ok", DateTimeOffset.UtcNow, 1m));
+        await db.SaveChangesAsync(Ct);
+
+        db.Transactions.Add(NewTransaction(Guid.NewGuid(), "test", "fk-orphan", DateTimeOffset.UtcNow, 1m));
+        await ConstraintAssert.ViolatesAsync(
+            () => db.SaveChangesAsync(Ct),
+            ConstraintAssert.ForeignKeyViolation,
+            "FK_transactions_accounts_account_id");
     }
 
     // ---- helpers -------------------------------------------------------------
