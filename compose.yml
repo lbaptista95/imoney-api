@@ -1,0 +1,43 @@
+# Local development only. Nothing here is deployed: hosting is a later feature,
+# and the password below guards a throwaway container on localhost.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: imoney
+      POSTGRES_USER: imoney
+      POSTGRES_PASSWORD: imoney_local_dev
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imoney -d imoney"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      # Reached by the compose service name, not localhost: the API runs in its
+      # own container and localhost there is the API itself.
+      ConnectionStrings__Default: "Host=db;Port=5432;Database=imoney;Username=imoney;Password=imoney_local_dev"
+      Auth__SharedToken: "local-dev-token-not-a-secret"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/health || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  db-data:

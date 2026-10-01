@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Named handlers carry XML comments into the generated document; the
+         OpenAPI generator reads them only from methods, never from lambdas. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- contracts/openapi.json is generated on build and committed. The generator
+         names its output after the project and offers no way to override that, so it
+         writes into obj and the target below copies it to the committed path. -->
+    <OpenApiGenerateDocumentsOnBuild>true</OpenApiGenerateDocumentsOnBuild>
+    <OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)\obj\openapi</OpenApiDocumentsDirectory>
+    <ContractPath>$(MSBuildProjectDirectory)\..\..\contracts\openapi.json</ContractPath>
+  </PropertyGroup>
+
+  <Target Name="CopyGeneratedContract" AfterTargets="GenerateOpenApiDocuments">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\obj\openapi\Api.json"
+          DestinationFiles="$(ContractPath)" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="10.0.12" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>
