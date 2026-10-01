@@ -57,11 +57,28 @@ if (args.Contains("seed"))
 
 // Migrations apply automatically only here. Anywhere else they are applied by an
 // explicit `dotnet ef database update`, so a deploy cannot migrate by accident.
+//
+// If the database cannot be reached here, the API refuses to start (AC 5a): it
+// would otherwise serve with no schema applied, which AC 2 forbids. Surviving a
+// database failure (AC 5) is about failures after this point.
 if (app.Environment.IsDevelopment())
 {
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+
+    try
+    {
+        await db.Database.MigrateAsync();
+    }
+    catch (Exception ex)
+    {
+        // Through the redactor, for the same reason as the seed: the exception that
+        // says it could not connect is the text most likely to quote the string.
+        var safe = ConnectionSecretRedactor.Redact(ex.Message, db.Database.GetConnectionString());
+        app.Logger.LogCritical("startup: could not reach the database to apply migrations: {Error}", safe);
+        await Console.Error.WriteLineAsync($"startup: could not reach the database to apply migrations: {safe}");
+        return 1;
+    }
 }
 
 // Turns an unhandled failure into problem+json with nothing internal in it. The

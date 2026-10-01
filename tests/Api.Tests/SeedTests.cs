@@ -96,6 +96,23 @@ public sealed class SeedTests(PostgresFixture postgres)
         Assert.Equal(0, succeeded.ExitCode);
     }
 
+    [Fact]
+    public async Task DevelopmentBootFailsFastWhenDatabaseUnreachable()
+    {
+        const string password = "boot-password-that-must-not-appear";
+
+        var result = await SeedProcess.BootAsync(
+            $"Host=127.0.0.1;Port=1;Database=imoney;Username=imoney;Password={password};Timeout=2",
+            timeout: TimeSpan.FromSeconds(60));
+
+        // Exiting is the claim. Staying up - serving with no migration applied - is
+        // the failure, and it shows up as a timeout, not as an exit code.
+        Assert.False(result.TimedOut, $"the API kept running with no reachable database:\n{result.Output}");
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("could not reach the database", result.Output, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(password, result.Output, StringComparison.Ordinal);
+    }
+
     private async Task<string> FreshDatabaseAsync()
     {
         var database = $"seed_{Guid.NewGuid():N}";
