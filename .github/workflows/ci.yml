@@ -1,0 +1,57 @@
+# CI for imoney-api. Runs on every pull request against main, and on main itself.
+#
+# Every step either is a dotnet command or calls a script in ci/, so the whole job
+# can be reproduced on a developer machine with the same commands. Nothing here
+# needs a cloud subscription: the database is an ephemeral PostgreSQL that the
+# integration tests start themselves through Testcontainers.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The full history, so the secret scan can walk the pull request's range.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        run: dotnet build
+
+      - name: Formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Unit and integration tests
+        run: dotnet test --project tests/Api.Tests/Api.Tests.csproj
+
+      - name: Proof runner fails closed
+        run: dotnet run ci/assert-proof-runner-fails-closed.cs
+
+      - name: Contract is current
+        run: dotnet ci/check-contract.cs
+
+      - name: Contract lint
+        run: dotnet ci/lint-contract.cs
+
+      # Independent of the local pre-commit hook, which `git commit --no-verify`
+      # skips. On a pull request the range is what the branch adds to main; on main
+      # it is what the push added.
+      - name: Secret scan
+        run: >-
+          dotnet ci/scan-secrets.cs --range
+          ${{ github.event_name == 'pull_request'
+              && format('origin/{0}..HEAD', github.base_ref)
+              || format('{0}..HEAD', github.event.before) }}

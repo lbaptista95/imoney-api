@@ -1,0 +1,28 @@
+# Lint ruleset for contracts/openapi.json (AC 26). The built-in OpenAPI rules plus
+# the two conventions ADR 0006 names, as errors so a violation fails the build.
+extends: ["spectral:oas"]
+
+rules:
+  imoney-error-responses-are-problem-json:
+    description: Every 4xx and 5xx response is application/problem+json (ADR 0006).
+    message: "{{path}} must be described as application/problem+json"
+    severity: error
+    given: "$.paths[*][*].responses[?(@property.match(/^[45]/))]"
+    then:
+      field: content
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: ["application/problem+json"]
+
+  imoney-data-routes-are-versioned:
+    description: Every route other than /health lives under /v1 (ADR 0006).
+    message: "{{property}} is a data route outside /v1"
+    severity: error
+    given: "$.paths"
+    then:
+      field: "@key"
+      function: pattern
+      functionOptions:
+        match: "^(/health|/v1(/.*)?)$"

@@ -42,11 +42,20 @@ public sealed class GeneratedContractFixture : IAsyncLifetime
     }
 }
 
+/// <summary>
+/// Every test that reads or writes contracts/openapi.json, serialized. C41 edits the
+/// real file and restores it, so no other test may read it in the meantime. Keeping
+/// those tests in one class was not enough: CiTests, a different class, read the file
+/// in parallel and failed intermittently while C41 had it tampered.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class ContractFileCollection
+{
+    public const string Name = "contracts/openapi.json";
+}
+
 /// <summary>S5: the OpenAPI contract is generated and committed (C39-C42).</summary>
-/// <remarks>
-/// One class, so its tests run one after another: C41 edits the real contract file
-/// and restores it, and nothing else may read that file in the meantime.
-/// </remarks>
+[Collection(ContractFileCollection.Name)]
 public sealed class ContractTests(GeneratedContractFixture contract) : IClassFixture<GeneratedContractFixture>
 {
     private const string ContractPath = "contracts/openapi.json";

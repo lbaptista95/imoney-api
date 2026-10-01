@@ -11,7 +11,8 @@ public static class ProcessRunner
         string workingDirectory,
         string file,
         IEnumerable<string> args,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        IDictionary<string, string?>? environment = null)
     {
         var startInfo = new ProcessStartInfo(file)
         {
@@ -23,6 +24,11 @@ public static class ProcessRunner
         foreach (var arg in args)
         {
             startInfo.ArgumentList.Add(arg);
+        }
+
+        foreach (var (key, value) in environment ?? new Dictionary<string, string?>())
+        {
+            startInfo.Environment[key] = value;
         }
 
         using var process = Process.Start(startInfo)
