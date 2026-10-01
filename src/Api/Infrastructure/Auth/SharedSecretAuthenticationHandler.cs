@@ -53,6 +53,24 @@ public sealed class SharedSecretAuthenticationHandler(
             new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
     }
 
+    /// <summary>
+    /// Answers 401 as problem+json. The contract documents every error that way, and
+    /// the framework's default challenge sends an empty body - a contract that says
+    /// one thing while the runtime does another is the kind of drift oasdiff and the
+    /// generated client cannot see.
+    /// </summary>
+    protected override async Task HandleChallengeAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status401Unauthorized;
+        Response.Headers.WWWAuthenticate = "Bearer";
+
+        await Results.Problem(
+                title: "Authentication required.",
+                detail: "Send `Authorization: Bearer <token>` with the configured shared token.",
+                statusCode: StatusCodes.Status401Unauthorized)
+            .ExecuteAsync(Context);
+    }
+
     private static bool FixedTimeEquals(string presented, string configured)
     {
         var left = Encoding.UTF8.GetBytes(presented);

@@ -1,5 +1,6 @@
 using Api.Features;
 using Api.Features.Accounts;
+using Api.Features.Health;
 using Api.Features.Transactions;
 using Api.Infrastructure.Auth;
 using Api.Infrastructure.Persistence;
@@ -86,12 +87,29 @@ app.UseAuthorization();
 app.MapOpenApi();
 
 // Outside the /v1 group on purpose: health exposes no data, so it needs no token.
-app.MapHealthChecks("/health").AllowAnonymous();
+app.MapGet("/health", GetHealth.HandleAsync)
+    .WithName("GetHealth")
+    .AllowAnonymous()
+    .Produces<HealthResponse>(StatusCodes.Status200OK)
+    .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
 // One group, so a route added later is guarded by default rather than by remembering.
+// Every status below is the one the plan's Surface lists for that route, and every
+// error is problem+json: the contract and the runtime have to say the same thing.
 var v1 = app.MapGroup("/v1").RequireAuthorization();
-v1.MapGet("/accounts", GetAccounts.HandleAsync);
-v1.MapGet("/transactions", GetTransactions.HandleAsync);
+
+v1.MapGet("/accounts", GetAccounts.HandleAsync)
+    .WithName("GetAccounts")
+    .Produces<List<AccountResponse>>(StatusCodes.Status200OK)
+    .ProducesProblem(StatusCodes.Status401Unauthorized)
+    .ProducesProblem(StatusCodes.Status500InternalServerError);
+
+v1.MapGet("/transactions", GetTransactions.HandleAsync)
+    .WithName("GetTransactions")
+    .Produces<TransactionPage>(StatusCodes.Status200OK)
+    .ProducesProblem(StatusCodes.Status400BadRequest)
+    .ProducesProblem(StatusCodes.Status401Unauthorized)
+    .ProducesProblem(StatusCodes.Status500InternalServerError);
 
 app.Run();
 

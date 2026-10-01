@@ -5,6 +5,38 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "GetHealth"
+        ],
+        "summary": "Reports whether the API can reach its database.",
+        "description": "A named handler over the native HealthCheckService rather than MapHealthChecks,\r\nbecause the OpenAPI generator does not describe MapHealthChecks endpoints and\r\nthe contract must list all three routes (AC 23). The check itself is unchanged.",
+        "operationId": "GetHealth",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/accounts": {
       "get": {
         "tags": [
@@ -12,9 +44,40 @@
         ],
         "summary": "Lists every account.",
         "description": "A named method, not a lambda: the OpenAPI generator reads XML comments only from methods.",
+        "operationId": "GetAccounts",
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccountResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -25,6 +88,7 @@
           "GetTransactions"
         ],
         "summary": "Lists transactions, newest first, paginated by an opaque cursor.",
+        "operationId": "GetTransactions",
         "parameters": [
           {
             "name": "cursor",
@@ -48,13 +112,219 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
     }
   },
+  "components": {
+    "schemas": {
+      "AccountResponse": {
+        "required": [
+          "id",
+          "provider",
+          "kind",
+          "name",
+          "balance"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The account's local id.",
+            "format": "uuid"
+          },
+          "provider": {
+            "type": "string",
+            "description": "The aggregator it came from."
+          },
+          "kind": {
+            "type": "string",
+            "description": "CHECKING or CREDIT_CARD."
+          },
+          "name": {
+            "type": "string",
+            "description": "The account's display name."
+          },
+          "balance": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "description": "The current balance.",
+            "format": "double"
+          }
+        },
+        "description": "What `GET /v1/accounts` returns for one account."
+      },
+      "HealthResponse": {
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always \"healthy\" in a 200."
+          }
+        },
+        "description": "What `GET /health` returns when every dependency answers."
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TransactionPage": {
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransactionResponse"
+            },
+            "description": "The page's rows."
+          },
+          "next_cursor": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "An opaque cursor for the next page, or null on the last page."
+          }
+        },
+        "description": "A page of transactions, newest first."
+      },
+      "TransactionResponse": {
+        "required": [
+          "id",
+          "account_id",
+          "type",
+          "amount",
+          "occurred_at",
+          "status",
+          "category_id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string"
+          },
+          "amount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ],
+            "format": "double"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "category_id": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          }
+        },
+        "description": "One transaction in the `GET /v1/transactions` page."
+      }
+    }
+  },
   "tags": [
+    {
+      "name": "GetHealth"
+    },
     {
       "name": "GetAccounts"
     },

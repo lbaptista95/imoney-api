@@ -51,6 +51,23 @@ public sealed class SharedTokenTests(PostgresFixture postgres)
             await StatusOf("/v1/accounts", new AuthenticationHeaderValue("Bearer", string.Empty)));
     }
 
+    /// <summary>
+    /// Not a numbered check: it keeps the runtime honest to the contract, which
+    /// documents every 401 as problem+json. The framework's default challenge sends an
+    /// empty body, and nothing else here would notice a return to it.
+    /// </summary>
+    [Fact]
+    public async Task UnauthorizedAnswersProblemJson()
+    {
+        await using var factory = new ApiFactory(postgres.ConnectionString, sharedToken: Token);
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/v1/accounts", Ct);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
     [Fact]
     public async Task AccountsWithConfiguredTokenReturns200()
         => Assert.Equal(
