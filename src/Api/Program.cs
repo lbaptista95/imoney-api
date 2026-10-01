@@ -101,7 +101,9 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapOpenApi();
+// No MapOpenApi: the contract is contracts/openapi.json, generated at build time and
+// committed (ADR 0006), which needs only AddOpenApi. Mapping it would serve a fourth,
+// unauthenticated route the plan's Surface does not list (C78).
 
 // Outside the /v1 group on purpose: health exposes no data, so it needs no token.
 app.MapGet("/health", GetHealth.HandleAsync)

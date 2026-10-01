@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Headers;
 using Api.Tests.Support;
@@ -77,6 +78,31 @@ public sealed class SharedTokenTests(PostgresFixture postgres)
     [Fact]
     public async Task HealthNeedsNoToken()
         => Assert.Equal(HttpStatusCode.OK, await StatusOf("/health", header: null));
+
+    /// <summary>
+    /// C78: the routes the server actually maps, read from its endpoint data source.
+    /// C39 proves the generated document lists three routes; this proves the server
+    /// serves no fourth one - which it did, an unauthenticated /openapi/v1.json from
+    /// MapOpenApi, that no check could see.
+    /// </summary>
+    [Fact]
+    public async Task ServerMapsExactlyTheSurfaceRoutes()
+    {
+        await using var factory = new ApiFactory(postgres.ConnectionString, sharedToken: Token);
+        factory.CreateClient();
+
+        var routes = factory.Services
+            .GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>()
+            .Endpoints
+            .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .SelectMany(endpoint =>
+                (endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.HttpMethodMetadata>()?.HttpMethods ?? ["*"])
+                .Select(method => $"{method} /{endpoint.RoutePattern.RawText?.TrimStart('/')}"))
+            .Order()
+            .ToList();
+
+        Assert.Equal(["GET /health", "GET /v1/accounts", "GET /v1/transactions"], routes);
+    }
 
     [Fact]
     public async Task StartupFailsNamingMissingSharedToken()
