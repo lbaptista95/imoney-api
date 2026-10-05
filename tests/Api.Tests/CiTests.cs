@@ -685,9 +685,10 @@ public sealed partial class CiTests
     // ---- C82: the test step's canary catches what turns its exit code off ----
 
     /// <summary>
-    /// The two configurations the sixth verification measured, each applied to a copy of
-    /// the tree. The canary script must fail on both, and for the reason that matters -
-    /// the step exiting 0 - not because the copy failed to build.
+    /// Three cases, each applied to a copy of the tree. The two configurations the sixth
+    /// verification measured must fail the canary script because the step exited 0; a
+    /// canary failing without its marker must fail it as not reported (the eighth). Each
+    /// fails for its own reason, not because the copy failed to build.
     /// </summary>
     [Fact]
     public async Task TestStepCanaryFailsWhenExitCodeIsIgnored()
