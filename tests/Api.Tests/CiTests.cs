@@ -384,6 +384,150 @@ public sealed partial class CiTests
     [GeneratedRegex(@"\$\{\{.*?\}\}", RegexOptions.Singleline)]
     private static partial Regex Expression();
 
+    // ---- C79: the one shape the workflow may take ----------------------------
+
+    /// <summary>
+    /// C71 forbids spellings, and four rounds of verification kept finding the next one.
+    /// This asserts the shape instead: a closed list of keys at every level and one
+    /// dotnet invocation per run, so a form nobody has thought of yet fails too. The
+    /// committed workflow passes, and each form already found is rejected for its own
+    /// reason - not merely rejected.
+    /// </summary>
+    [Fact]
+    public void CiWorkflowHasOnlyTheAllowedShape()
+    {
+        var committed = File.ReadAllText(Workflow).ReplaceLineEndings("\n");
+        Assert.Empty(ShapeViolations(committed));
+
+        const string format = "        run: dotnet format --verify-no-changes\n";
+        Assert.Contains(format, committed);
+        const string permissions = "permissions:\n  contents: read\n";
+        Assert.Contains(permissions, committed);
+        const string rangeLiteral = "'{0}..HEAD'";
+        Assert.Contains(rangeLiteral, committed);
+
+        var variants = new (string Name, string Workflow, string Reason)[]
+        {
+            ("|| true", committed.Replace(format, "        run: dotnet format --verify-no-changes || true\n"), "shell operator `|`"),
+            ("&& and another line", committed.Replace(format, "        run: |\n          dotnet format --verify-no-changes && echo formatted\n          echo done\n"), "more than one line"),
+            ("if: false", committed.Replace(format, "        if: ${{ false }}\n" + format), "key `if`"),
+            ("background &", committed.Replace(format, "        run: dotnet format --verify-no-changes &\n"), "shell operator `&`"),
+            ("shell: bash {0}", committed.Replace(format, "        shell: bash {0}\n        run: |\n          dotnet format --verify-no-changes\n          echo done\n"), "key `shell`"),
+            ("defaults.run.shell", committed.Replace(permissions, permissions + "\ndefaults:\n  run:\n    shell: bash {0}\n"), "key `defaults`"),
+            ("continue-on-error", committed.Replace(format, "        continue-on-error: true\n" + format), "key `continue-on-error`"),
+            ("operator in an expression literal", committed.Replace(rangeLiteral, "'{0}..HEAD; true'"), "expression literal"),
+            ("not dotnet", committed.Replace(format, "        run: echo dotnet format --verify-no-changes\n"), "single dotnet invocation"),
+        };
+
+        foreach (var (name, workflow, reason) in variants)
+        {
+            Assert.NotEqual(committed, workflow);
+            var violations = ShapeViolations(workflow);
+            Assert.True(
+                violations.Any(violation => violation.Contains(reason, StringComparison.Ordinal)),
+                $"the {name} form was not rejected for `{reason}`; violations: [{string.Join("; ", violations)}]");
+        }
+    }
+
+    private static readonly string[] WorkflowKeys = ["name", "on", "permissions", "jobs"];
+
+    private static readonly string[] JobKeys = ["runs-on", "steps"];
+
+    private static readonly string[] ActionStepKeys = ["uses", "name", "with"];
+
+    private static readonly string[] RunStepKeys = ["name", "run"];
+
+    private static readonly string[] ShellOperators = [";", "&", "|", "<", ">", "`", "$("];
+
+    /// <summary>Every way the workflow text leaves the allowed shape; empty when it is in it.</summary>
+    private static List<string> ShapeViolations(string workflow)
+    {
+        var violations = new List<string>();
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(workflow));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+
+        Keys(root, WorkflowKeys, "the workflow");
+
+        var jobs = (YamlMappingNode)root.Children[new YamlScalarNode("jobs")];
+        foreach (var (jobName, jobNode) in jobs.Children)
+        {
+            var job = (YamlMappingNode)jobNode;
+            Keys(job, JobKeys, $"job {jobName}");
+
+            foreach (var step in ((YamlSequenceNode)job.Children[new YamlScalarNode("steps")]).Cast<YamlMappingNode>())
+            {
+                if (step.Children.ContainsKey(new YamlScalarNode("uses")))
+                {
+                    Keys(step, ActionStepKeys, "an action step");
+                    continue;
+                }
+
+                Keys(step, RunStepKeys, "a run step");
+                if (!step.Children.TryGetValue(new YamlScalarNode("run"), out var runNode))
+                {
+                    violations.Add("a step has neither `uses` nor `run`");
+                    continue;
+                }
+
+                Run(((YamlScalarNode)runNode).Value ?? string.Empty);
+            }
+        }
+
+        return violations;
+
+        void Keys(YamlMappingNode node, string[] allowed, string where)
+        {
+            foreach (var key in node.Children.Keys.Select(k => ((YamlScalarNode)k).Value!))
+            {
+                if (!allowed.Contains(key))
+                {
+                    violations.Add($"{where} has the key `{key}`, outside [{string.Join(", ", allowed)}]");
+                }
+            }
+        }
+
+        void Run(string run)
+        {
+            // A literal block ends in one newline, which is not a second command.
+            var line = run.EndsWith('\n') ? run[..^1] : run;
+
+            // Expressions are evaluated before the shell sees the line, so their own
+            // operators and line breaks are not shell text - but the literals they put
+            // into it are. A folded `>-` keeps the breaks of an expression spread over
+            // more-indented lines, which is why lines are counted only after this.
+            foreach (Match expression in Expression().Matches(line))
+            {
+                foreach (Match literal in ExpressionLiteral().Matches(expression.Value))
+                {
+                    foreach (var op in ShellOperators.Append("\n").Where(op => literal.Value.Contains(op, StringComparison.Ordinal)))
+                    {
+                        violations.Add($"expression literal {literal.Value} puts the shell operator `{op}` into run `{line}`");
+                    }
+                }
+            }
+
+            var shell = Expression().Replace(line, "EXPR");
+            if (shell.Contains('\n'))
+            {
+                violations.Add($"run `{line}` spans more than one line");
+            }
+
+            foreach (var op in ShellOperators.Where(op => shell.Contains(op, StringComparison.Ordinal)))
+            {
+                violations.Add($"run `{line}` has the shell operator `{op}`");
+            }
+
+            if (!shell.StartsWith("dotnet ", StringComparison.Ordinal))
+            {
+                violations.Add($"run `{line}` is not a single dotnet invocation");
+            }
+        }
+    }
+
+    [GeneratedRegex(@"'(?:[^']|'')*'")]
+    private static partial Regex ExpressionLiteral();
+
     [Fact]
     public async Task CachedGitleaksIsReplacedFromTheVerifiedArchive()
     {

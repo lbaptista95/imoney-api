@@ -46,9 +46,7 @@
           EnvironmentVariables="Auth__SharedToken=openapi-document-generation-only" />
 
     <!-- The generator joins multi-line XML comments with the OS newline, so the same
-         source produced 
- inside strings on Windows and 
- on Linux, and the CI
+         source produced \r\n inside strings on Windows and \n on Linux, and the CI
          (Linux) contract check failed against a contract generated here (F1 of the
          third verification). Normalized in place, the same on every OS, before the
          copy. -->
@@ -60,9 +58,7 @@
   </Target>
 
   <!-- Inline, so it runs on any OS with no tool beyond the SDK. Replaces the JSON
-       escape 
- inside strings and any physical CRLF with 
-. -->
+       escape \r\n inside strings and any physical CRLF with \n. -->
   <UsingTask TaskName="NormalizeContractNewlines"
              TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">

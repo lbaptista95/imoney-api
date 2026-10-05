@@ -70,6 +70,59 @@ public sealed class ResponseFieldTests(PostgresFixture postgres)
         Assert.Equal(transactions.Count, items.Count);
         AssertEveryField(items, transactionFields, json => transactions[json.GetProperty("id").GetGuid()]);
 
+        // ---- GET /v1/transactions: the page envelope around the rows ------------
+        // The order the page promises, (occurred_at desc, id desc), asked of Postgres
+        // itself: its uuid order is not .NET's Guid order, so sorting here would not do.
+        var expectedOrder = await db.Transactions.AsNoTracking()
+            .OrderByDescending(t => t.OccurredAt)
+            .ThenByDescending(t => t.Id)
+            .Select(t => t.Id)
+            .ToListAsync(Ct);
+
+        // next_cursor is opaque, so it is compared by its effect: null on the last page,
+        // and on every other page a cursor that leads to exactly the next row. Following
+        // it is the walk below, which checks where each page starts.
+        var envelopeFields = new Dictionary<string, Action<JsonElement, PageSlice>>
+        {
+            ["items"] = (json, slice) => Assert.Equal(
+                expectedOrder.Skip(slice.Start).Take(PageSize),
+                json.EnumerateArray().Select(item => item.GetProperty("id").GetGuid())),
+            ["next_cursor"] = (json, slice) =>
+            {
+                if (slice.Start + PageSize >= expectedOrder.Count)
+                {
+                    Assert.Equal(JsonValueKind.Null, json.ValueKind);
+                }
+                else
+                {
+                    Assert.False(string.IsNullOrEmpty(json.GetString()), $"page at row {slice.Start} has rows after it but no cursor");
+                }
+            },
+        };
+        var envelopeSchema = SchemaProperties(contract, "/v1/transactions", envelope: true);
+        Assert.Equal(envelopeSchema.Order(), envelopeFields.Keys.Order());
+
+        // Three pages at least, so a middle page - cursor in and cursor out - is walked.
+        Assert.True(expectedOrder.Count > 2 * PageSize, $"the seed has {expectedOrder.Count} transactions, too few to walk three pages of {PageSize}");
+
+        var start = 0;
+        string? cursor = null;
+        do
+        {
+            var url = $"/v1/transactions?limit={PageSize}" + (cursor is null ? string.Empty : $"&cursor={Uri.EscapeDataString(cursor)}");
+            var envelope = (await GetJsonAsync(client, url)).RootElement;
+
+            // The response itself carries no property the schema does not, either.
+            Assert.Equal(envelopeSchema.Order(), envelope.EnumerateObject().Select(p => p.Name).Order());
+            AssertEveryField([envelope], envelopeFields, _ => new PageSlice(start));
+
+            cursor = envelope.GetProperty("next_cursor").GetString();
+            start += PageSize;
+        }
+        while (cursor is not null);
+
+        Assert.True(start >= expectedOrder.Count, $"the walk stopped at row {start} of {expectedOrder.Count}");
+
         // ---- GET /v1/accounts: every row, against the database ---------------
         var accounts = await db.Accounts.AsNoTracking().ToDictionaryAsync(a => a.Id, Ct);
         var accountFields = new Dictionary<string, Action<JsonElement, Features.Accounts.Account>>
@@ -97,6 +150,12 @@ public sealed class ResponseFieldTests(PostgresFixture postgres)
         AssertEveryField([health], healthFields, _ => "healthy");
     }
 
+    /// <summary>Small, so the seed spreads over several pages and every edge is walked.</summary>
+    private const int PageSize = 3;
+
+    /// <summary>Where a page of the walk starts in the expected order.</summary>
+    private sealed record PageSlice(int Start);
+
     private static void AssertEveryField<TSource>(
         IEnumerable<JsonElement> rows,
         Dictionary<string, Action<JsonElement, TSource>> fields,
@@ -115,9 +174,14 @@ public sealed class ResponseFieldTests(PostgresFixture postgres)
 
     /// <summary>
     /// The property names of a route's 200 response schema in the committed contract,
-    /// following $ref, through an array, and - for a page - into the named list.
+    /// following $ref, through an array, and - for a page - into the named list, or with
+    /// <paramref name="envelope"/> the page object itself.
     /// </summary>
-    private static IReadOnlyList<string> SchemaProperties(JsonDocument contract, string path, string? itemsOf = null)
+    private static IReadOnlyList<string> SchemaProperties(
+        JsonDocument contract,
+        string path,
+        string? itemsOf = null,
+        bool envelope = false)
     {
         var schema = contract.RootElement
             .GetProperty("paths").GetProperty(path).GetProperty("get")
@@ -125,6 +189,11 @@ public sealed class ResponseFieldTests(PostgresFixture postgres)
             .GetProperty("content").GetProperty("application/json").GetProperty("schema");
 
         schema = Resolve(contract, schema);
+        if (envelope)
+        {
+            return schema.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+        }
+
         if (schema.TryGetProperty("items", out var arrayItems) && !schema.TryGetProperty("properties", out _))
         {
             schema = Resolve(contract, arrayItems);
