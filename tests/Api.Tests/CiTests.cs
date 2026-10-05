@@ -558,6 +558,7 @@ public sealed partial class CiTests
         "dotnet build",
         "dotnet format --verify-no-changes",
         "dotnet test --project tests/Api.Tests/Api.Tests.csproj",
+        "dotnet run ci/assert-test-step-fails.cs",
         "dotnet run ci/assert-proof-runner-fails-closed.cs",
         "dotnet ci/scan-secrets.cs --range ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || format('{0}..HEAD', github.event.before) }}",
     ];
@@ -594,6 +595,174 @@ public sealed partial class CiTests
                 violations.Any(violation => violation.Contains(reason, StringComparison.Ordinal)),
                 $"the {name} form was not rejected for `{reason}`; violations: [{string.Join("; ", violations)}]");
         }
+    }
+
+    // ---- C81: the whole workflow, as reviewed -------------------------------
+
+    /// <summary>
+    /// C79 and C80 close the run lines; the sixth verification walked around them through
+    /// an action step's `with:` (checkout `ref: main` tests main instead of the PR) and a
+    /// trigger filter (`paths-ignore` switches the CI off). Closing each key is a list
+    /// that never ends, so the whole file is pinned: any change to the CI fails here
+    /// until this copy changes in the same diff, where it is reviewed.
+    /// </summary>
+    [Fact]
+    public void CiWorkflowIsTheReviewedCopy()
+    {
+        var committed = File.ReadAllText(Workflow).ReplaceLineEndings("\n");
+        Assert.Equal(ReviewedWorkflow.ReplaceLineEndings("\n"), committed);
+    }
+
+    /// <summary>The CI workflow as last reviewed. Change it only together with ci.yml.</summary>
+    private const string ReviewedWorkflow = """
+        # CI for imoney-api. Runs on every pull request against main, and on main itself.
+        #
+        # Every step either is a dotnet command or calls a script in ci/, so the whole job
+        # can be reproduced on a developer machine with the same commands. Nothing here
+        # needs a cloud subscription: the database is an ephemeral PostgreSQL that the
+        # integration tests start themselves through Testcontainers.
+        name: ci
+
+        on:
+          pull_request:
+            branches: [main]
+          push:
+            branches: [main]
+
+        permissions:
+          contents: read
+
+        jobs:
+          build-and-test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+                with:
+                  # The full history, so the secret scan can walk the pull request's range.
+                  fetch-depth: 0
+
+              - uses: actions/setup-dotnet@v6
+                with:
+                  dotnet-version: "10.0.x"
+
+              # Before any build, on purpose: building regenerates contracts/openapi.json in
+              # place, so a check after it would compare the file with itself and always
+              # pass. Both contract steps must see the file as committed.
+              - name: Contract is current
+                run: dotnet ci/check-contract.cs
+
+              - name: Contract lint
+                run: dotnet ci/lint-contract.cs
+
+              - name: Build
+                run: dotnet build
+
+              - name: Formatting
+                run: dotnet format --verify-no-changes
+
+              - name: Unit and integration tests
+                run: dotnet test --project tests/Api.Tests/Api.Tests.csproj
+
+              # The pinned command above cannot show what it reads: a launchSettings.json or a
+              # csproj property can make it exit 0 with tests failing. This runs it on a canary
+              # that always fails and requires the failure to reach the exit code.
+              - name: Test step fails on a failing test
+                run: dotnet run ci/assert-test-step-fails.cs
+
+              - name: Proof runner fails closed
+                run: dotnet run ci/assert-proof-runner-fails-closed.cs
+
+              # Independent of the local pre-commit hook, which `git commit --no-verify`
+              # skips. On a pull request the range is what the branch adds to main; on main
+              # it is what the push added.
+              - name: Secret scan
+                # One line on purpose: C79 allows no line break anywhere in a run, not even
+                # inside an expression.
+                run: dotnet ci/scan-secrets.cs --range ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || format('{0}..HEAD', github.event.before) }}
+
+        """;
+
+    // ---- C82: the test step's canary catches what turns its exit code off ----
+
+    /// <summary>
+    /// The two configurations the sixth verification measured, each applied to a copy of
+    /// the tree. The canary script must fail on both, and for the reason that matters -
+    /// the step exiting 0 - not because the copy failed to build.
+    /// </summary>
+    [Fact]
+    public async Task TestStepCanaryFailsWhenExitCodeIsIgnored()
+    {
+        var mutants = new (string Name, Action<string> Apply)[]
+        {
+            ("launchSettings.json with TESTINGPLATFORM_EXITCODE_IGNORE", copy =>
+            {
+                var properties = Path.Combine(copy, "tests", "Api.Tests", "Properties");
+                Directory.CreateDirectory(properties);
+                File.WriteAllText(
+                    Path.Combine(properties, "launchSettings.json"),
+                    """{ "profiles": { "Api.Tests": { "commandName": "Project", "environmentVariables": { "TESTINGPLATFORM_EXITCODE_IGNORE": "2" } } } }""");
+            }),
+            ("--ignore-exit-code in the test csproj", copy =>
+            {
+                var csproj = Path.Combine(copy, "tests", "Api.Tests", "Api.Tests.csproj");
+                var text = File.ReadAllText(csproj);
+                const string anchor = "<OutputType>Exe</OutputType>";
+                Assert.Contains(anchor, text);
+                File.WriteAllText(csproj, text.Replace(
+                    anchor,
+                    anchor + "<TestingPlatformCommandLineArguments>--ignore-exit-code 2</TestingPlatformCommandLineArguments>",
+                    StringComparison.Ordinal));
+            }),
+        };
+
+        foreach (var (name, apply) in mutants)
+        {
+            var copy = await WorkingTreeCopyAsync();
+            try
+            {
+                apply(copy);
+                var result = await ProcessRunner.RunAsync(
+                    Root,
+                    "dotnet",
+                    ["run", "ci/assert-test-step-fails.cs", "--root", copy],
+                    timeout: TimeSpan.FromMinutes(10));
+
+                Assert.True(result.ExitCode != 0, $"the canary passed with {name}:\n{result.Output}");
+                Assert.True(
+                    result.Output.Contains("the test step exited 0", StringComparison.Ordinal),
+                    $"the canary failed with {name}, but not because the step exited 0:\n{result.Output}");
+            }
+            finally
+            {
+                DeleteTree(copy);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The working tree as git sees it - tracked and untracked-but-not-ignored files - so
+    /// nothing built here (bin/, obj/) reaches the copy and every build in it is fresh.
+    /// </summary>
+    private static async Task<string> WorkingTreeCopyAsync()
+    {
+        var listed = await ProcessRunner.RunAsync(Root, "git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
+        Assert.True(listed.ExitCode == 0, $"git ls-files failed:\n{listed.Output}");
+
+        var copy = TempDirectory();
+        foreach (var relative in listed.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var source = Path.Combine(Root, relative);
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            var target = Path.Combine(copy, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(source, target);
+        }
+
+        return copy;
     }
 
     /// <summary>Every way the workflow's runs differ from the listed commands; empty when they match.</summary>

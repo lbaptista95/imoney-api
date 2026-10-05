@@ -46,6 +46,12 @@ jobs:
       - name: Unit and integration tests
         run: dotnet test --project tests/Api.Tests/Api.Tests.csproj
 
+      # The pinned command above cannot show what it reads: a launchSettings.json or a
+      # csproj property can make it exit 0 with tests failing. This runs it on a canary
+      # that always fails and requires the failure to reach the exit code.
+      - name: Test step fails on a failing test
+        run: dotnet run ci/assert-test-step-fails.cs
+
       - name: Proof runner fails closed
         run: dotnet run ci/assert-proof-runner-fails-closed.cs
 
