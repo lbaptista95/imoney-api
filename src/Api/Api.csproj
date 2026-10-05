@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Where `dotnet user-secrets` keeps Auth:SharedToken for local runs (door 4).
+         Without it the Development host never reads user-secrets at all. -->
+    <UserSecretsId>imoney-api</UserSecretsId>
+    <!-- Named handlers carry XML comments into the generated document; the
+         OpenAPI generator reads them only from methods, never from lambdas. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- contracts/openapi.json is generated on build and committed. The generator
+         names its output after the project and offers no way to override that, so it
+         writes into obj and the target below copies it to the committed path. -->
+    <!-- The package's own build hook is off: this project drives generation from
+         the GenerateContract target below, so the token stays scoped to that process. -->
+    <OpenApiGenerateDocumentsOnBuild>false</OpenApiGenerateDocumentsOnBuild>
+    <OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)\obj\openapi</OpenApiDocumentsDirectory>
+    <ContractPath>$(MSBuildProjectDirectory)\..\..\contracts\openapi.json</ContractPath>
+  </PropertyGroup>
+
+  <!-- The document generator starts this application to read its routes, and the
+       application refuses to start without Auth:SharedToken (AC 13). Rather than
+       carve an exemption into that guard, the package's build hook is turned off and
+       this target invokes the generator itself, handing the value to that one process
+       through EnvironmentVariables. Nothing else in the build, the test run or the
+       runtime sees it, and the guard keeps no special case for it.
+
+       It mirrors the package's command construction, so if a package update changes
+       that command this target can drift. What catches the drift is the contract
+       check: it fails when the committed document stops matching a clean build. -->
+  <Target Name="GenerateContract" AfterTargets="Build" Condition=" '$(GenerateContract)' != 'false' ">
+    <PropertyGroup>
+      <_ContractOutputPath>$([System.IO.Path]::GetFullPath('$(OpenApiDocumentsDirectory)').TrimEnd('\'))</_ContractOutputPath>
+      <_GetDocumentDll>$(NuGetPackageRoot)microsoft.extensions.apidescription.server\10.0.12\tools\dotnet-getdocument.dll</_GetDocumentDll>
+      <_GetDocumentCommand>dotnet "$(_GetDocumentDll)" --assembly "$(TargetPath)" --file-list "$(MSBuildProjectDirectory)\obj\openapi-files.cache" --framework "$(TargetFrameworkMoniker)" --output "$(_ContractOutputPath)" --project "$(MSBuildProjectName)" --assets-file "$(ProjectAssetsFile)"</_GetDocumentCommand>
+    </PropertyGroup>
+
+    <!-- EnvironmentVariables is scoped to this process only. The value is not a
+         credential: it authenticates nothing, because this process never listens on
+         a port - it loads the assembly, reads the routes and exits. -->
+    <Exec Command="$(_GetDocumentCommand)"
+          LogStandardErrorAsError="true"
+          EnvironmentVariables="Auth__SharedToken=openapi-document-generation-only" />
+
+    <!-- The generator joins multi-line XML comments with the OS newline, so the same
+         source produced \r\n inside strings on Windows and \n on Linux, and the CI
+         (Linux) contract check failed against a contract generated here (F1 of the
+         third verification). Normalized in place, the same on every OS, before the
+         copy. -->
+    <NormalizeContractNewlines Path="$(MSBuildProjectDirectory)\obj\openapi\Api.json" />
+
+    <!-- Inside the same target, so turning generation off turns the copy off too. -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\obj\openapi\Api.json"
+          DestinationFiles="$(ContractPath)" />
+  </Target>
+
+  <!-- Inline, so it runs on any OS with no tool beyond the SDK. Replaces the JSON
+       escape \r\n inside strings and any physical CRLF with \n. -->
+  <UsingTask TaskName="NormalizeContractNewlines"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Path ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var text = System.IO.File.ReadAllText(Path);
+        // "\\r\\n" is the JSON escape inside a string; "\r\n" a physical line break.
+        var normalized = text.Replace("\\r\\n", "\\n").Replace("\r\n", "\n");
+        if (normalized != text)
+        {
+            System.IO.File.WriteAllText(Path, normalized);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="10.0.12" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>

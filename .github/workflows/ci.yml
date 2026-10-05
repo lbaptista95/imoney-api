@@ -1,0 +1,64 @@
+# CI for imoney-api. Runs on every pull request against main, and on main itself.
+#
+# Every step either is a dotnet command or calls a script in ci/, so the whole job
+# can be reproduced on a developer machine with the same commands. Nothing here
+# needs a cloud subscription: the database is an ephemeral PostgreSQL that the
+# integration tests start themselves through Testcontainers.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The full history, so the secret scan can walk the pull request's range.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      # Before any build, on purpose: building regenerates contracts/openapi.json in
+      # place, so a check after it would compare the file with itself and always
+      # pass. Both contract steps must see the file as committed.
+      - name: Contract is current
+        run: dotnet ci/check-contract.cs
+
+      - name: Contract lint
+        run: dotnet ci/lint-contract.cs
+
+      - name: Build
+        run: dotnet build
+
+      - name: Formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Unit and integration tests
+        run: dotnet test --project tests/Api.Tests/Api.Tests.csproj
+
+      # The pinned command above cannot show what it reads: a launchSettings.json or a
+      # csproj property can make it exit 0 with tests failing. This runs it on a canary
+      # that always fails and requires the failure to reach the exit code.
+      - name: Test step fails on a failing test
+        run: dotnet run ci/assert-test-step-fails.cs
+
+      - name: Proof runner fails closed
+        run: dotnet run ci/assert-proof-runner-fails-closed.cs
+
+      # Independent of the local pre-commit hook, which `git commit --no-verify`
+      # skips. On a pull request the range is what the branch adds to main; on main
+      # it is what the push added.
+      - name: Secret scan
+        # One line on purpose: C79 allows no line break anywhere in a run, not even
+        # inside an expression.
+        run: dotnet ci/scan-secrets.cs --range ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || format('{0}..HEAD', github.event.before) }}
