@@ -542,6 +542,102 @@ public sealed partial class CiTests
     [GeneratedRegex(@"'(?:[^']|'')*'")]
     private static partial Regex ExpressionLiteral();
 
+    // ---- C80: the CI commands, pinned line by line ---------------------------
+
+    /// <summary>
+    /// C79 closed the vocabulary and the fifth verification walked through the arguments:
+    /// `-- --ignore-exit-code 2` turns a failing suite into a passing step, and an
+    /// expression can put into the line a value none of its literals spell. So the
+    /// content is pinned instead: every run is exactly one of these lines. Changing the
+    /// CI means changing this list too, in the same diff.
+    /// </summary>
+    private static readonly string[] ListedRuns =
+    [
+        "dotnet ci/check-contract.cs",
+        "dotnet ci/lint-contract.cs",
+        "dotnet build",
+        "dotnet format --verify-no-changes",
+        "dotnet test --project tests/Api.Tests/Api.Tests.csproj",
+        "dotnet run ci/assert-proof-runner-fails-closed.cs",
+        "dotnet ci/scan-secrets.cs --range ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || format('{0}..HEAD', github.event.before) }}",
+    ];
+
+    [Fact]
+    public void CiRunsAreExactlyTheListedCommands()
+    {
+        var committed = File.ReadAllText(Workflow).ReplaceLineEndings("\n");
+        Assert.Empty(PinnedRunViolations(committed));
+
+        const string test = "        run: dotnet test --project tests/Api.Tests/Api.Tests.csproj\n";
+        Assert.Contains(test, committed);
+        const string build = "      - name: Build\n        run: dotnet build\n";
+        Assert.Contains(build, committed);
+        const string formatting = "      - name: Formatting\n        run: dotnet format --verify-no-changes\n";
+        Assert.Contains(formatting, committed);
+        const string rangeLiteral = "'{0}..HEAD'";
+        Assert.Contains(rangeLiteral, committed);
+
+        var variants = new (string Name, string Workflow, string Reason)[]
+        {
+            ("--ignore-exit-code", committed.Replace(test, test[..^1] + " -- --ignore-exit-code 2\n"), "not one of the listed commands"),
+            ("fromJSON value", committed.Replace(test, test[..^1] + @" ${{ fromJSON('""\u007c\u007c true""') }}" + "\n"), "not one of the listed commands"),
+            ("changed expression", committed.Replace(rangeLiteral, "'{0}..HEAD~1'"), "not one of the listed commands"),
+            ("dropped step", committed.Replace(formatting, string.Empty), "missing from ci.yml"),
+            ("step without name", committed.Replace(build, "      - run: dotnet build\n"), "has no name"),
+        };
+
+        foreach (var (name, workflow, reason) in variants)
+        {
+            Assert.NotEqual(committed, workflow);
+            var violations = PinnedRunViolations(workflow);
+            Assert.True(
+                violations.Any(violation => violation.Contains(reason, StringComparison.Ordinal)),
+                $"the {name} form was not rejected for `{reason}`; violations: [{string.Join("; ", violations)}]");
+        }
+    }
+
+    /// <summary>Every way the workflow's runs differ from the listed commands; empty when they match.</summary>
+    private static List<string> PinnedRunViolations(string workflow)
+    {
+        var violations = new List<string>();
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(workflow));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+
+        var runs = new List<string>();
+        foreach (var (jobName, jobNode) in ((YamlMappingNode)root.Children[new YamlScalarNode("jobs")]).Children)
+        {
+            foreach (var step in ((YamlSequenceNode)((YamlMappingNode)jobNode).Children[new YamlScalarNode("steps")]).Cast<YamlMappingNode>())
+            {
+                if (!step.Children.TryGetValue(new YamlScalarNode("run"), out var runNode))
+                {
+                    continue;
+                }
+
+                var run = ((YamlScalarNode)runNode).Value ?? string.Empty;
+                runs.Add(run);
+
+                if (!step.Children.TryGetValue(new YamlScalarNode("name"), out var nameNode)
+                    || string.IsNullOrWhiteSpace(((YamlScalarNode)nameNode).Value))
+                {
+                    violations.Add($"the step running `{run}` in job {jobName} has no name");
+                }
+            }
+        }
+
+        foreach (var run in runs.Where(run => !ListedRuns.Contains(run, StringComparer.Ordinal)))
+        {
+            violations.Add($"run `{run}` is not one of the listed commands");
+        }
+
+        foreach (var listed in ListedRuns.Where(listed => runs.Count(run => run == listed) != 1))
+        {
+            violations.Add($"`{listed}` is missing from ci.yml or appears more than once");
+        }
+
+        return violations;
+    }
+
     [Fact]
     public async Task CachedGitleaksIsReplacedFromTheVerifiedArchive()
     {
