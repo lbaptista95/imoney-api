@@ -13,7 +13,13 @@ public sealed class CanaryTests
     /// <summary>The name the canary script filters on. Renaming the test breaks the script, by design.</summary>
     public const string Name = nameof(TestStepCanaryAlwaysFails);
 
+    /// <summary>
+    /// Printed only in the canary's failure message, so the script can tell that the
+    /// canary failed - not merely that its name appeared, as it does when it is ignored.
+    /// </summary>
+    public const string FailureMarker = "IMONEY-CANARY-FAILED";
+
     [Fact(Explicit = true)]
     public void TestStepCanaryAlwaysFails() =>
-        Assert.Fail("The canary always fails: ci/assert-test-step-fails.cs needs the test step to report it.");
+        Assert.Fail($"{FailureMarker}: the canary always fails; ci/assert-test-step-fails.cs needs the test step to report it.");
 }

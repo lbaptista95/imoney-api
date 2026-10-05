@@ -22,6 +22,9 @@ using System.Diagnostics;
 
 const int TestFailed = 2;
 const string Canary = "TestStepCanaryAlwaysFails";
+
+// In the canary's failure message only: its name also appears when it is ignored.
+const string FailureMarker = "IMONEY-CANARY-FAILED";
 const int ZeroTestsRan = 8;
 
 if (args.Length == 3 && args[0] == "--decide")
@@ -63,7 +66,7 @@ var stderr = process.StandardError.ReadToEndAsync();
 await process.WaitForExitAsync();
 var output = await stdout + await stderr;
 
-var canaryReported = output.Contains($"CanaryTests.{Canary}", StringComparison.Ordinal);
+var canaryReported = output.Contains(FailureMarker, StringComparison.Ordinal);
 var (ok, verdict) = Decide(process.ExitCode, canaryReported);
 
 if (ok)
@@ -82,8 +85,8 @@ static (bool Passed, string Message) Decide(int exitCode, bool canaryReported) =
     (TestFailed, true) => (true, $"ok: the test step exits {TestFailed} when a test fails, so a red suite cannot pass the CI."),
     (0, true) => (false, "FAIL: the canary failed and the test step exited 0. Something the command reads turns test failures "
                          + "into success - look for TESTINGPLATFORM_EXITCODE_IGNORE or --ignore-exit-code in the test project."),
-    (0, false) or (ZeroTestsRan, _) => (false, $"FAIL: the canary did not run (exit {exitCode}). Check that {Canary} still "
-                         + "exists and is the Explicit test --explicit only selects."),
+    (0, false) or (ZeroTestsRan, _) => (false, $"FAIL: the canary did not run or did not fail (exit {exitCode}). Check that "
+                         + $"{Canary} still exists, is the Explicit test --explicit only selects, and fails with {FailureMarker}."),
     (TestFailed, false) => (false, "FAIL: the test step exited 2, but the canary was not reported; something else failed."),
     _ => (false, $"FAIL: expected exit {TestFailed} (a test failed), got {exitCode}. "
                  + "That is a different failure - most likely the build - so this run proves nothing about the step."),

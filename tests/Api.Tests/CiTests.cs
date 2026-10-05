@@ -692,7 +692,8 @@ public sealed partial class CiTests
     [Fact]
     public async Task TestStepCanaryFailsWhenExitCodeIsIgnored()
     {
-        var mutants = new (string Name, Action<string> Apply)[]
+        const string exitedZero = "the test step exited 0";
+        var mutants = new (string Name, Action<string> Apply, string Reason)[]
         {
             ("launchSettings.json with TESTINGPLATFORM_EXITCODE_IGNORE", copy =>
             {
@@ -701,7 +702,7 @@ public sealed partial class CiTests
                 File.WriteAllText(
                     Path.Combine(properties, "launchSettings.json"),
                     """{ "profiles": { "Api.Tests": { "commandName": "Project", "environmentVariables": { "TESTINGPLATFORM_EXITCODE_IGNORE": "2" } } } }""");
-            }),
+            }, exitedZero),
             ("--ignore-exit-code in the test csproj", copy =>
             {
                 var csproj = Path.Combine(copy, "tests", "Api.Tests", "Api.Tests.csproj");
@@ -711,10 +712,23 @@ public sealed partial class CiTests
                 const string anchor = "</TestingPlatformCommandLineArguments>";
                 Assert.Contains(anchor, text);
                 File.WriteAllText(csproj, text.Replace(anchor, " --ignore-exit-code 2" + anchor, StringComparison.Ordinal));
-            }),
+            }, exitedZero),
+
+            // The real path of "exit 2 without the canary": the canary fails, but not with
+            // its marker. Proven here and not only through --decide, which takes that input
+            // ready-made and leaves the line computing it unproven (F1 of the eighth
+            // verification).
+            ("the canary failing without its marker", copy =>
+            {
+                var canary = Path.Combine(copy, "tests", "Api.Tests", "CanaryTests.cs");
+                var text = File.ReadAllText(canary);
+                const string marker = "FailureMarker = \"IMONEY-CANARY-FAILED\"";
+                Assert.Contains(marker, text);
+                File.WriteAllText(canary, text.Replace(marker, "FailureMarker = \"SOMETHING-ELSE\"", StringComparison.Ordinal));
+            }, "the canary was not reported"),
         };
 
-        foreach (var (name, apply) in mutants)
+        foreach (var (name, apply, reason) in mutants)
         {
             var copy = await WorkingTreeCopyAsync();
             try
@@ -728,8 +742,8 @@ public sealed partial class CiTests
 
                 Assert.True(result.ExitCode != 0, $"the canary passed with {name}:\n{result.Output}");
                 Assert.True(
-                    result.Output.Contains("the test step exited 0", StringComparison.Ordinal),
-                    $"the canary failed with {name}, but not because the step exited 0:\n{result.Output}");
+                    result.Output.Contains(reason, StringComparison.Ordinal),
+                    $"the canary failed with {name}, but not for `{reason}`:\n{result.Output}");
             }
             finally
             {
