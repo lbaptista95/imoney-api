@@ -706,12 +706,11 @@ public sealed partial class CiTests
             {
                 var csproj = Path.Combine(copy, "tests", "Api.Tests", "Api.Tests.csproj");
                 var text = File.ReadAllText(csproj);
-                const string anchor = "<OutputType>Exe</OutputType>";
+                // Appended to the project's own runner arguments: a second property
+                // before it would be overridden and the mutant would change nothing.
+                const string anchor = "</TestingPlatformCommandLineArguments>";
                 Assert.Contains(anchor, text);
-                File.WriteAllText(csproj, text.Replace(
-                    anchor,
-                    anchor + "<TestingPlatformCommandLineArguments>--ignore-exit-code 2</TestingPlatformCommandLineArguments>",
-                    StringComparison.Ordinal));
+                File.WriteAllText(csproj, text.Replace(anchor, " --ignore-exit-code 2" + anchor, StringComparison.Ordinal));
             }),
         };
 
@@ -736,6 +735,99 @@ public sealed partial class CiTests
             {
                 DeleteTree(copy);
             }
+        }
+    }
+
+    /// <summary>
+    /// The canary script's decision table, one asserted case per row, where it is decided:
+    /// only exit 2 with the canary reported passes. A script simplified to "non-zero"
+    /// would let a crashed host or an aborted session pass for a failing test.
+    /// </summary>
+    [Fact]
+    public async Task TestStepCanaryDecidesEveryExitCode()
+    {
+        var rows = new (int ExitCode, bool CanaryReported, bool Passes, string Reason)[]
+        {
+            (2, true, true, "ok: the test step exits 2"),
+            (0, true, false, "the test step exited 0"),
+            (0, false, false, "the canary did not run"),
+            (8, false, false, "the canary did not run"),
+            (2, false, false, "the canary was not reported"),
+            (1, true, false, "expected exit 2 (a test failed), got 1"),
+            (3, true, false, "expected exit 2 (a test failed), got 3"),
+        };
+
+        foreach (var (exitCode, canaryReported, passes, reason) in rows)
+        {
+            var result = await ProcessRunner.RunAsync(
+                Root,
+                "dotnet",
+                ["run", "ci/assert-test-step-fails.cs", "--decide", $"{exitCode}", canaryReported ? "true" : "false"]);
+
+            Assert.True(
+                (result.ExitCode == 0) == passes,
+                $"exit {exitCode} with the canary {(canaryReported ? "reported" : "missing")} should {(passes ? "pass" : "fail")}:\n{result.Output}");
+            Assert.True(
+                result.Output.Contains(reason, StringComparison.Ordinal),
+                $"exit {exitCode} with the canary {(canaryReported ? "reported" : "missing")} was not decided for `{reason}`:\n{result.Output}");
+        }
+    }
+
+    // ---- C83, and C38's second proof: a test that does not run ------------------
+
+    /// <summary>
+    /// `--fail-skips on` does not reach Explicit tests, which the runner counts as not
+    /// run: a check's test marked Explicit leaves its proof at exit 0 having run nothing.
+    /// So Explicit is kept to the one test that needs it, the C82 canary.
+    /// </summary>
+    [Fact]
+    public void OnlyTheCanaryIsExplicit()
+    {
+        var tests = Path.Combine(Root, "tests", "Api.Tests");
+        var explicitFiles = Directory.GetFiles(tests, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .SelectMany(path => ExplicitTrue().Matches(File.ReadAllText(path)).Select(_ => Path.GetRelativePath(tests, path)))
+            .ToList();
+
+        Assert.Equal(["CanaryTests.cs"], explicitFiles);
+    }
+
+    [GeneratedRegex(@"\bExplicit\s*=\s*true\b")]
+    private static partial Regex ExplicitTrue();
+
+    /// <summary>
+    /// C38 proves a filter matching nothing fails; this proves a matching test left with
+    /// `Skip` fails its proof too, on a copy of the tree, through the proof's own command.
+    /// Without `--fail-skips on` in the test project, it exits 0 having run nothing.
+    /// </summary>
+    [Fact]
+    public async Task NamedTestThatDoesNotRunFailsItsProof()
+    {
+        var copy = await WorkingTreeCopyAsync();
+        try
+        {
+            var file = Path.Combine(copy, "tests", "Api.Tests", "CiTests.cs");
+            var text = File.ReadAllText(file);
+            const string fact = "    [Fact]\n    public void CiWorkflowNeedsNoCloudSubscription()";
+            var normalized = text.ReplaceLineEndings("\n");
+            Assert.Contains(fact, normalized);
+            File.WriteAllText(file, normalized.Replace(
+                fact,
+                "    [Fact(Skip = \"left behind by accident\")]\n    public void CiWorkflowNeedsNoCloudSubscription()",
+                StringComparison.Ordinal));
+
+            var result = await ProcessRunner.RunAsync(
+                copy,
+                "dotnet",
+                ["test", "--project", "tests/Api.Tests/Api.Tests.csproj", "--", "--filter-method", "*CiWorkflowNeedsNoCloudSubscription"],
+                timeout: TimeSpan.FromMinutes(10));
+
+            Assert.True(result.ExitCode == 2, $"the proof of a skipped test exited {result.ExitCode}, not 2 (a test failed):\n{result.Output}");
+        }
+        finally
+        {
+            DeleteTree(copy);
         }
     }
 

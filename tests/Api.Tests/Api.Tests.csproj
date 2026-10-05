@@ -12,6 +12,11 @@
          measures exactly that, so never set that option to 0. -->
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <!-- A skipped test fails, in every run: a proof whose test was left with
+         `Skip` would otherwise exit 0 having run nothing (C38, F1 of the seventh
+         verification). It does not reach Explicit tests, which C83 limits to the
+         canary. -->
+    <TestingPlatformCommandLineArguments>--fail-skips on</TestingPlatformCommandLineArguments>
   </PropertyGroup>
 
   <ItemGroup>
