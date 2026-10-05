@@ -53,8 +53,6 @@ jobs:
       # skips. On a pull request the range is what the branch adds to main; on main
       # it is what the push added.
       - name: Secret scan
-        run: >-
-          dotnet ci/scan-secrets.cs --range
-          ${{ github.event_name == 'pull_request'
-              && format('origin/{0}..HEAD', github.base_ref)
-              || format('{0}..HEAD', github.event.before) }}
+        # One line on purpose: C79 allows no line break anywhere in a run, not even
+        # inside an expression.
+        run: dotnet ci/scan-secrets.cs --range ${{ github.event_name == 'pull_request' && format('origin/{0}..HEAD', github.base_ref) || format('{0}..HEAD', github.event.before) }}

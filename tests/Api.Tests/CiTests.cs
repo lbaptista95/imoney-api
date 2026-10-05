@@ -405,6 +405,7 @@ public sealed partial class CiTests
         Assert.Contains(permissions, committed);
         const string rangeLiteral = "'{0}..HEAD'";
         Assert.Contains(rangeLiteral, committed);
+        var scan = committed.Split('\n').Single(line => line.Contains("run: dotnet ci/scan-secrets.cs", StringComparison.Ordinal)) + "\n";
 
         var variants = new (string Name, string Workflow, string Reason)[]
         {
@@ -416,6 +417,7 @@ public sealed partial class CiTests
             ("defaults.run.shell", committed.Replace(permissions, permissions + "\ndefaults:\n  run:\n    shell: bash {0}\n"), "key `defaults`"),
             ("continue-on-error", committed.Replace(format, "        continue-on-error: true\n" + format), "key `continue-on-error`"),
             ("operator in an expression literal", committed.Replace(rangeLiteral, "'{0}..HEAD; true'"), "expression literal"),
+            ("line break inside an expression", committed.Replace(scan, FoldedScan.ReplaceLineEndings("\n")), "more than one line"),
             ("not dotnet", committed.Replace(format, "        run: echo dotnet format --verify-no-changes\n"), "single dotnet invocation"),
         };
 
@@ -428,6 +430,19 @@ public sealed partial class CiTests
                 $"the {name} form was not rejected for `{reason}`; violations: [{string.Join("; ", violations)}]");
         }
     }
+
+    /// <summary>
+    /// The secret scan as it was before C79: a folded block keeps the breaks of the
+    /// more-indented lines, so the expression reaches the parsed value with three.
+    /// </summary>
+    private const string FoldedScan = """
+                run: >-
+                  dotnet ci/scan-secrets.cs --range
+                  ${{ github.event_name == 'pull_request'
+                      && format('origin/{0}..HEAD', github.base_ref)
+                      || format('{0}..HEAD', github.event.before) }}
+
+        """;
 
     private static readonly string[] WorkflowKeys = ["name", "on", "permissions", "jobs"];
 
@@ -489,18 +504,21 @@ public sealed partial class CiTests
 
         void Run(string run)
         {
-            // A literal block ends in one newline, which is not a second command.
+            // A literal block ends in one newline, which is not a second command. Any
+            // other break fails, counted as parsed - even inside an expression.
             var line = run.EndsWith('\n') ? run[..^1] : run;
+            if (line.Contains('\n'))
+            {
+                violations.Add($"run `{line}` spans more than one line");
+            }
 
             // Expressions are evaluated before the shell sees the line, so their own
-            // operators and line breaks are not shell text - but the literals they put
-            // into it are. A folded `>-` keeps the breaks of an expression spread over
-            // more-indented lines, which is why lines are counted only after this.
+            // operators are not shell text - but the literals they put into it are.
             foreach (Match expression in Expression().Matches(line))
             {
                 foreach (Match literal in ExpressionLiteral().Matches(expression.Value))
                 {
-                    foreach (var op in ShellOperators.Append("\n").Where(op => literal.Value.Contains(op, StringComparison.Ordinal)))
+                    foreach (var op in ShellOperators.Where(op => literal.Value.Contains(op, StringComparison.Ordinal)))
                     {
                         violations.Add($"expression literal {literal.Value} puts the shell operator `{op}` into run `{line}`");
                     }
@@ -508,10 +526,6 @@ public sealed partial class CiTests
             }
 
             var shell = Expression().Replace(line, "EXPR");
-            if (shell.Contains('\n'))
-            {
-                violations.Add($"run `{line}` spans more than one line");
-            }
 
             foreach (var op in ShellOperators.Where(op => shell.Contains(op, StringComparison.Ordinal)))
             {
